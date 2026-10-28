@@ -102,15 +102,49 @@ def create_staff(email: str, password: str, full_name: str, role: str = "staff",
             print(f"    - Domain:    {domain}")
         print(f"    - Portal:    http://localhost:5173/government/login\n")
 
+def delete_user(email: str):
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        email = email.strip().lower()
+        existing = db.scalar(select(User).where(User.email == email))
+        if not existing:
+            print(f"[!] No user found with email '{email}'.")
+            return
+        db.delete(existing)
+        db.commit()
+        print(f"[✓] Successfully deleted user '{email}'.")
+
+def list_users():
+    Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        users = db.scalars(select(User)).all()
+        if not users:
+            print("No users found in database.")
+            return
+        print("\n=== Existing Accounts ===")
+        for u in users:
+            print(f"  - {u.email:<30} | Name: {u.full_name:<20} | Role: {u.role}")
+        print()
+
 def main():
-    parser = argparse.ArgumentParser(description="Create government staff or admin accounts in CivicOne.")
+    parser = argparse.ArgumentParser(description="Create, list, or delete government staff or admin accounts in CivicOne.")
     parser.add_argument("--email", help="Account email address")
     parser.add_argument("--password", help="Account password (min 8 characters)")
     parser.add_argument("--name", help="Full name of staff member / admin")
     parser.add_argument("--role", choices=["staff", "dept_admin", "platform_admin"], default="staff", help="Role type")
     parser.add_argument("--domain", choices=["transport", "municipal", "healthcare"], default="transport", help="Department domain")
+    parser.add_argument("--delete", help="Delete an account by email address")
+    parser.add_argument("--list", action="store_true", help="List all accounts in the database")
 
     args = parser.parse_args()
+
+    if args.list:
+        list_users()
+        return
+
+    if args.delete:
+        delete_user(args.delete)
+        return
 
     # Interactive mode if arguments are missing
     if not args.email or not args.password:
@@ -156,3 +190,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
