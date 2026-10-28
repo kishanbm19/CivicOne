@@ -5,6 +5,7 @@ pydantic>=2
 pydantic-settings
 alembic
 psycopg2-binary
+psycopg[binary]
 argon2-cffi
 pyjwt
 email-validator

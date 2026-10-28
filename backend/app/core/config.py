@@ -1,4 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+import re
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -10,5 +12,13 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     UPLOAD_DIRECTORY: str = "../storage"
     MAX_UPLOAD_SIZE_MB: int = 5
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def sanitize_database_url(cls, v: str) -> str:
+        if isinstance(v, str):
+            # Clean accidental placeholder brackets like :<password>@ -> :password@
+            v = re.sub(r':<([^>]+)>@', r':\1@', v)
+        return v
 
 settings = Settings()
