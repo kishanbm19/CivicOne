@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { User, Mail, Lock, Phone, AlertCircle, ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
 import Logo from "../components/common/Logo";
 import { useAuth } from "../context/AuthContext";
-import { errMsg } from "../api/axios";
+import { errMsg } from "../services/axios";
 
 export default function Register() {
   const { signUp } = useAuth();

@@ -215,7 +215,8 @@ class PasswordResetToken(Base):
     __tablename__ = "password_reset_tokens"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    token: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    # Stores a SHA-256 hex digest of the raw token; the raw token is never persisted.
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

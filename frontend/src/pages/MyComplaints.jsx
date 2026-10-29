@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Search, Filter, Plus, ChevronRight, Bus, Building2, HeartPulse, RefreshCw } from "lucide-react";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
-import { listComplaints } from "../api/complaints";
+import { listComplaints } from "../services/complaints";
 
 export default function MyComplaints() {
   const navigate = useNavigate();

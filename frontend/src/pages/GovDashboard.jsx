@@ -30,8 +30,8 @@ import {
 } from "recharts";
 import StatCard from "../components/dashboard/StatCard";
 import ComplaintTable from "../components/dashboard/ComplaintTable";
-import { listComplaints } from "../api/complaints";
-import { getDepartmentAnalytics } from "../api/services";
+import { listComplaints } from "../services/complaints";
+import { getDepartmentAnalytics } from "../services/services";
 import { useAuth } from "../context/AuthContext";
 
 export default function GovDashboard() {

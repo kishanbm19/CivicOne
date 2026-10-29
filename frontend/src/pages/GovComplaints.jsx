@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams, useOutletContext } from "react-rout
 import { Search, Filter, RefreshCw, AlertCircle, CheckCircle2, ChevronRight, Plus } from "lucide-react";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
-import { listComplaints } from "../api/complaints";
+import { listComplaints } from "../services/complaints";
 
 export default function GovComplaints() {
   const navigate = useNavigate();

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Bell, CheckCircle2, Calendar, ExternalLink } from "lucide-react";
-import { listNotifications, markNotificationRead, markAllNotificationsRead } from "../api/services";
+import { listNotifications, markNotificationRead, markAllNotificationsRead } from "../services/services";
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState([]);

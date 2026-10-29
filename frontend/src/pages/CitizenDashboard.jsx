@@ -18,9 +18,9 @@ import {
 import StatCard from "../components/dashboard/StatCard";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
-import { listComplaints } from "../api/complaints";
-import { getCitizenAnalytics } from "../api/services";
-import { listPublicDocuments } from "../api/documents";
+import { listComplaints } from "../services/complaints";
+import { getCitizenAnalytics } from "../services/services";
+import { listPublicDocuments } from "../services/documents";
 import { useAuth } from "../context/AuthContext";
 
 export default function CitizenDashboard() {

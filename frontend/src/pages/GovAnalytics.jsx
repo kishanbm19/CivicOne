@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import { BarChart3, TrendingUp, Clock, CheckCircle2, ShieldAlert } from "lucide-react";
 import StatCard from "../components/dashboard/StatCard";
-import { getDepartmentAnalytics, getPlatformAnalytics } from "../api/services";
+import { getDepartmentAnalytics, getPlatformAnalytics } from "../services/services";
 import { useAuth } from "../context/AuthContext";
 
 export default function GovAnalytics() {

@@ -24,9 +24,9 @@ import {
   assignComplaint,
   addInternalNote,
   reopenComplaint
-} from "../api/complaints";
+} from "../services/complaints";
 import { useAuth } from "../context/AuthContext";
-import { errMsg } from "../api/axios";
+import { errMsg } from "../services/axios";
 
 export default function ComplaintDetail() {
   const { id } = useParams();

@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, Mail, AlertCircle, ArrowRight, Sparkles } from "lucide-react";
 import Logo from "../components/common/Logo";
 import { useAuth } from "../context/AuthContext";
-import { errMsg } from "../api/axios";
+import { errMsg } from "../services/axios";
 
 export default function Login({ portal = "citizen" }) {
   const isGov = portal === "government";

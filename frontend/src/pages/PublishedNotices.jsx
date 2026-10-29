@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileText, Calendar, Tag, Search, Filter } from "lucide-react";
 import NoticeCard from "../components/dashboard/NoticeCard";
-import { listPublicDocuments } from "../api/documents";
+import { listPublicDocuments } from "../services/documents";
 
 export default function PublishedNotices() {
   const [searchParams] = useSearchParams();

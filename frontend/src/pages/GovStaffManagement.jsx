@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Users, UserPlus, Shield, CheckCircle2, AlertCircle } from "lucide-react";
-import { listStaff, provisionStaff, listDepartments } from "../api/services";
-import { errMsg } from "../api/axios";
+import { listStaff, provisionStaff, listDepartments } from "../services/services";
+import { errMsg } from "../services/axios";
 
 export default function GovStaffManagement() {
   const [staff, setStaff] = useState([]);
@@ -12,7 +12,7 @@ export default function GovStaffManagement() {
   // Provision inputs
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("Staff#1234");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState("staff");
   const [deptId, setDeptId] = useState("");
   const [roleInDept, setRoleInDept] = useState("staff");
@@ -53,6 +53,9 @@ export default function GovStaffManagement() {
       setShowModal(false);
       setFullName("");
       setEmail("");
+      setPassword("");
+      setRole("staff");
+      setRoleInDept("staff");
       loadData();
     } catch (err) {
       setError(errMsg(err));
@@ -215,6 +218,15 @@ export default function GovStaffManagement() {
                     <option value="dept_admin">Department Administrator</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Department Role</label>
+                <select value={roleInDept} onChange={(e) => setRoleInDept(e.target.value)} className="input">
+                  <option value="staff">Staff</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="manager">Manager</option>
+                </select>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Hospital, MapPin, Phone, Calendar, Clock, CheckCircle2, AlertCircle, Plus } from "lucide-react";
-import { getFacilities, getAppointments, createAppointment } from "../api/services";
-import { errMsg } from "../api/axios";
+import { getFacilities, getAppointments, createAppointment } from "../services/services";
+import { errMsg } from "../services/axios";
 
 export default function HealthcareServices() {
   const [facilities, setFacilities] = useState([]);

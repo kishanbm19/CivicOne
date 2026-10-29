@@ -14,8 +14,8 @@ import {
   ShieldAlert,
   Info
 } from "lucide-react";
-import { createComplaint, uploadComplaintImage } from "../api/complaints";
-import { errMsg } from "../api/axios";
+import { createComplaint, uploadComplaintImage } from "../services/complaints";
+import { errMsg } from "../services/axios";
 
 export default function NewComplaint() {
   const navigate = useNavigate();
