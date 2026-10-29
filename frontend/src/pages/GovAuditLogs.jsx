@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ShieldAlert, RefreshCw, Key, UserCheck, FileCheck, Layers } from "lucide-react";
-import { getAuditLogs } from "../api/services";
+import { getAuditLogs } from "../services/services";
 
 export default function GovAuditLogs() {
   const [logs, setLogs] = useState([]);

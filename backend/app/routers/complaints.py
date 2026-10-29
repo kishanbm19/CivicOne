@@ -11,9 +11,9 @@ from ..core.database import get_db
 from ..core.dependencies import current_user, authorized_department_ids
 from ..core.logging import log_audit_event
 from ..models import Complaint, StatusHistory, ComplaintInternalNote, User, Department, Notification
-from ..ai.service import classify_complaint
-from ..policies.routing import route_department
-from ..policies.permissions import can_transition
+from ..services.ai_classifier import classify_complaint
+from ..services.complaint_router import route_department
+from ..core.permissions import can_transition
 
 router = APIRouter(prefix="/api/v1/complaints", tags=["complaints"])
 

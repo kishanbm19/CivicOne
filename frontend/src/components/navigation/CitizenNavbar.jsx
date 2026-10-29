@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { Bell, User, LogOut, ChevronDown, CheckCircle, ExternalLink, Shield } from "lucide-react";
 import Logo from "../common/Logo";
 import { useAuth } from "../../context/AuthContext";
-import { markNotificationRead, markAllNotificationsRead } from "../../api/services";
+import { markNotificationRead, markAllNotificationsRead } from "../../services/services";
 
 export default function CitizenNavbar({ activeDomain = null }) {
   const { user, signOut, unreadCount, setUnreadCount } = useAuth();

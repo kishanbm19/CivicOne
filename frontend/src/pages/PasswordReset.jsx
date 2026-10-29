@@ -2,8 +2,8 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Mail, Lock, Key, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import Logo from "../components/common/Logo";
-import { requestPasswordReset, confirmPasswordReset } from "../api/auth";
-import { errMsg } from "../api/axios";
+import { requestPasswordReset, confirmPasswordReset } from "../services/auth";
+import { errMsg } from "../services/axios";
 
 export default function PasswordReset() {
   const [step, setStep] = useState(1);

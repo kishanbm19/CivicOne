@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -5,8 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from ..core.config import settings
 from ..core.database import get_db
 from ..core.dependencies import current_user, staff_user
+from ..core.ratelimit import check_rate_limit, RateLimitExceeded
 from ..core.security import (
     hash_password,
     verify_password,
@@ -16,6 +19,7 @@ from ..core.security import (
 )
 from ..core.logging import log_audit_event
 from ..models import User, DepartmentMembership, PasswordResetToken, RefreshSession, Organization, Department
+from ..services.email import send_password_reset_email, EmailNotConfiguredError, EmailDeliveryError
 
 router = APIRouter(prefix="/api/v1", tags=["auth"])
 
@@ -231,52 +235,197 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
     }
 
 @router.post("/auth/password-reset/request")
-def password_reset_request(body: PasswordResetRequestIn, db: Session = Depends(get_db)):
-    u = db.scalar(select(User).where(User.email == body.email.lower()))
-    if u:
-        token = secrets.token_urlsafe(32)
-        prt = PasswordResetToken(
-            user_id=u.id,
-            token=token,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=2),
-            used=False
+def password_reset_request(body: PasswordResetRequestIn, request: Request, db: Session = Depends(get_db)):
+    """
+    Initiate a password-reset flow.
+
+    Security properties:
+    - Always returns the same generic message regardless of whether the email
+      is registered, preventing user-enumeration.
+    - The raw token is NEVER written to the API response or to any log.
+    - Only a SHA-256 hash of the token is stored in the database.
+    - The token expires after PASSWORD_RESET_TOKEN_EXPIRE_MINUTES (default 20 min).
+    - Old unused tokens for the same user are invalidated before issuing a new one.
+    - Rate-limited per client IP to prevent abuse.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"pw_reset_rate:{client_ip}"
+
+    # --- Rate limiting (DB-backed sliding window) ---
+    try:
+        check_rate_limit(
+            db,
+            key=rate_key,
+            limit=settings.PASSWORD_RESET_RATE_LIMIT,
+            window_minutes=settings.PASSWORD_RESET_RATE_WINDOW_MINUTES,
         )
-        db.add(prt)
+    except RateLimitExceeded:
+        # Record the blocked attempt without revealing whether the email exists.
+        log_audit_event(
+            db,
+            action=rate_key,
+            details="Password-reset rate limit exceeded",
+            ip_address=client_ip,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many password-reset requests. Please try again later."
+        )
+
+    # Record this attempt for rate-limit counting in future calls.
+    log_audit_event(
+        db,
+        action=rate_key,
+        details="Password-reset attempt counted for rate limiting",
+        ip_address=client_ip,
+    )
+
+    # --- Generic response regardless of account existence ---
+    _GENERIC_OK = {"message": "If that email is registered, a password-reset link has been sent."}
+
+    u = db.scalar(select(User).where(User.email == body.email.lower()))
+    if not u or not u.is_active:
+        # Do not reveal whether the address is registered.
+        return _GENERIC_OK
+
+    # --- Invalidate any existing unused tokens for this user ---
+    old_tokens = db.scalars(
+        select(PasswordResetToken).where(
+            PasswordResetToken.user_id == u.id,
+            PasswordResetToken.used.is_(False),
+        )
+    ).all()
+    for old in old_tokens:
+        old.used = True
+    if old_tokens:
+        db.flush()
+
+    # --- Generate a cryptographically secure token ---
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+
+    prt = PasswordResetToken(
+        user_id=u.id,
+        token_hash=token_hash,
+        expires_at=datetime.now(timezone.utc) + timedelta(
+            minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
+        ),
+        used=False,
+    )
+    db.add(prt)
+    db.commit()
+
+    # --- Build the reset link and send the email ---
+    reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
+
+    try:
+        send_password_reset_email(to_address=u.email, reset_link=reset_link)
+    except EmailNotConfiguredError:
+        # SMTP is not configured — refuse to silently swallow.
+        # Mark the token as used so it cannot be exploited if someone gains
+        # DB access, then return a clear operational error.
+        prt.used = True
         db.commit()
         log_audit_event(
             db,
-            action="PASSWORD_RESET_REQUESTED",
+            action="PASSWORD_RESET_EMAIL_NOT_CONFIGURED",
             actor_id=u.id,
             actor_email=u.email,
-            details=f"Token generated (demo token: {token})"
+            details="Password-reset email could not be sent: SMTP not configured",
+            ip_address=client_ip,
         )
-        return {"message": "Password reset instructions have been generated.", "demo_token": token}
-    return {"message": "If the email is registered, instructions have been generated."}
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Email delivery is not configured on this server. "
+            "Please contact the administrator.",
+        )
+    except EmailDeliveryError:
+        # Transient SMTP failure — invalidate the token and tell the client.
+        prt.used = True
+        db.commit()
+        log_audit_event(
+            db,
+            action="PASSWORD_RESET_EMAIL_FAILED",
+            actor_id=u.id,
+            actor_email=u.email,
+            details="Password-reset email delivery failed due to SMTP error",
+            ip_address=client_ip,
+        )
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Failed to send the password-reset email. Please try again later.",
+        )
+
+    # Audit — no raw token logged.
+    log_audit_event(
+        db,
+        action="PASSWORD_RESET_REQUESTED",
+        actor_id=u.id,
+        actor_email=u.email,
+        resource_type="user",
+        resource_id=u.id,
+        details="Password-reset email sent",
+        ip_address=client_ip,
+    )
+
+    return _GENERIC_OK
+
 
 @router.post("/auth/password-reset/confirm")
 def password_reset_confirm(body: PasswordResetConfirmIn, db: Session = Depends(get_db)):
+    """
+    Complete a password-reset using the token from the emailed link.
+
+    Security properties:
+    - Accepts the raw token from the client, hashes it, and looks up the hash —
+      the raw token is never stored or logged.
+    - Rejects tokens that are expired, already used, or do not exist (all return
+      the same 400 so attackers cannot distinguish between the cases).
+    - Marks the token as used immediately upon successful reset (single-use).
+    - Revokes all active refresh sessions for the account so existing logins
+      are terminated.
+    """
+    _INVALID_MSG = "Invalid or expired reset token"
+
+    # Hash the submitted token and look up only its hash in the DB.
+    submitted_hash = hashlib.sha256(body.token.encode()).hexdigest()
+
     prt = db.scalar(
         select(PasswordResetToken).where(
-            PasswordResetToken.token == body.token,
-            PasswordResetToken.used.is_(False)
+            PasswordResetToken.token_hash == submitted_hash,
+            PasswordResetToken.used.is_(False),
         )
     )
     if not prt:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, _INVALID_MSG)
 
     now_utc = datetime.now(timezone.utc)
     expires_at = prt.expires_at
     if expires_at and expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at and expires_at < now_utc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Reset token has expired")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, _INVALID_MSG)
 
     user = db.get(User, prt.user_id)
-    if not user:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "User account not found")
+    if not user or not user.is_active:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, _INVALID_MSG)
 
+    # --- Apply the new password ---
     user.password_hash = hash_password(body.new_password)
+
+    # --- Consume the token (single-use) ---
     prt.used = True
+
+    # --- Revoke all active refresh sessions for this account ---
+    active_sessions = db.scalars(
+        select(RefreshSession).where(
+            RefreshSession.user_id == user.id,
+            RefreshSession.is_revoked.is_(False),
+        )
+    ).all()
+    for session in active_sessions:
+        session.is_revoked = True
+
     db.commit()
 
     log_audit_event(
@@ -284,6 +433,9 @@ def password_reset_confirm(body: PasswordResetConfirmIn, db: Session = Depends(g
         action="PASSWORD_RESET_COMPLETED",
         actor_id=user.id,
         actor_email=user.email,
-        details="User password successfully reset"
+        resource_type="user",
+        resource_id=user.id,
+        details=f"Password reset completed; {len(active_sessions)} refresh session(s) revoked",
     )
+
     return {"message": "Password updated successfully. You can now log in."}

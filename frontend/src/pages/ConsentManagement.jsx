@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Shield, ShieldAlert, Plus, CheckCircle2, AlertCircle, Trash2, Clock, Building } from "lucide-react";
-import { listConsentGrants, createConsentGrant, revokeConsentGrant, listOrganizations } from "../api/services";
-import { errMsg } from "../api/axios";
+import { listConsentGrants, createConsentGrant, revokeConsentGrant, listOrganizations } from "../services/services";
+import { errMsg } from "../services/axios";
 
 export default function ConsentManagement() {
   const [grants, setGrants] = useState([]);

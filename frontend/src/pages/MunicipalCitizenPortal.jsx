@@ -18,7 +18,7 @@ import {
 import { MunicipalHeroIllustration } from "../components/common/HeroIllustrations";
 import StatCard from "../components/dashboard/StatCard";
 import NoticeCard from "../components/dashboard/NoticeCard";
-import { getPublicStats } from "../api/services";
+import { getPublicStats } from "../services/services";
 
 export default function MunicipalCitizenPortal() {
   const navigate = useNavigate();

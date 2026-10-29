@@ -13,6 +13,22 @@ class Settings(BaseSettings):
     UPLOAD_DIRECTORY: str = "../storage"
     MAX_UPLOAD_SIZE_MB: int = 5
 
+    # Password-reset email delivery settings (all optional; reset flow degrades
+    # safely when not configured).
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@civicone.gov"
+    SMTP_TLS: bool = True
+    FRONTEND_URL: str = "http://localhost:5173"
+
+    # Maximum password-reset requests per IP per window (simple DB-backed counter).
+    PASSWORD_RESET_RATE_LIMIT: int = 5
+    PASSWORD_RESET_RATE_WINDOW_MINUTES: int = 60
+    # Token validity window in minutes.
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 20
+
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def sanitize_database_url(cls, v: str) -> str:

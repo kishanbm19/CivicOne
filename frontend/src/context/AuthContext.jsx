@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { login as apiLogin, register as apiRegister, getMe, getStaffMe, logout as apiLogout } from "../api/auth";
-import { listNotifications } from "../api/services";
+import { login as apiLogin, register as apiRegister, getMe, getStaffMe, logout as apiLogout } from "../services/auth";
+import { listNotifications } from "../services/services";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);

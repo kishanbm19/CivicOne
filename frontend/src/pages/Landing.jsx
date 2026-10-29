@@ -16,7 +16,7 @@ import {
   HelpCircle
 } from "lucide-react";
 import Logo from "../components/common/Logo";
-import { getPublicStats, listPublicDocuments } from "../api";
+import { getPublicStats, listPublicDocuments } from "../services";
 import { TransportHeroIllustration } from "../components/common/HeroIllustrations";
 
 export default function Landing() {

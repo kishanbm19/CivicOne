@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { User, Mail, Phone, Lock, CheckCircle2, AlertCircle, Shield } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
-import api, { errMsg } from "../api/axios";
+import api, { errMsg } from "../services/axios";
 
 export default function ProfileSettings() {
   const { user, refreshProfile } = useAuth();

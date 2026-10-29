@@ -19,9 +19,9 @@ import {
   approveDocument,
   publishDocument,
   unpublishDocument
-} from "../api/documents";
+} from "../services/documents";
 import { useAuth } from "../context/AuthContext";
-import { errMsg } from "../api/axios";
+import { errMsg } from "../services/axios";
 
 export default function GovDocuments() {
   const { user } = useAuth();
