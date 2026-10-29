@@ -23,6 +23,8 @@ wheels/
 .env
 dev.db
 *.db
+.venv/
+
 
 # Node & Frontend
 node_modules/
