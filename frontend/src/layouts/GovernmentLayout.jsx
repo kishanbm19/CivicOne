@@ -5,14 +5,13 @@ import GovTopBar from "../components/navigation/GovTopBar";
 import { useAuth } from "../context/AuthContext";
 
 export default function GovernmentLayout() {
-  const { user, staffProfile } = useAuth();
+  const { staffProfile } = useAuth();
   const navigate = useNavigate();
 
-  // Determine active domain based on user profile or current department
-  const initialDomain = staffProfile?.primary_domain || (
-    user?.email?.includes("transport") ? "transport" :
-    user?.email?.includes("healthcare") ? "healthcare" : "municipal"
-  );
+  const initialDomain =
+    staffProfile?.primary_domain ||
+    staffProfile?.departments?.[0]?.organization_domain ||
+    null;
 
   const [activeDomain, setActiveDomain] = useState(initialDomain);
   const [currentDept, setCurrentDept] = useState(

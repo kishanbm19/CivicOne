@@ -1,41 +1,38 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Bell, User, LogOut, ChevronDown, CheckCircle, ExternalLink, Shield } from "lucide-react";
 import Logo from "../common/Logo";
 import { useAuth } from "../../context/AuthContext";
-import { markNotificationRead, markAllNotificationsRead } from "../../services/services";
+import { listNotifications, markNotificationRead, markAllNotificationsRead } from "../../services/services";
 
 export default function CitizenNavbar({ activeDomain = null }) {
   const { user, signOut, unreadCount, setUnreadCount } = useAuth();
   const location = useLocation();
   const [showNotifs, setShowNotifs] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [notifications, setNotifications] = useState([
-    {
-      id: "n-1",
-      title: "Complaint Status: In Progress",
-      message: "Bus delay on Route 45 (#T-2024-0012) is being investigated.",
-      link: "/app/complaints",
-      is_read: false,
-      created_at: "2 hours ago"
-    },
-    {
-      id: "n-2",
-      title: "Notice: Route 45 Schedule Updated",
-      message: "A revised timetable has been published for Route 45.",
-      link: "/services/transport",
-      is_read: false,
-      created_at: "3 days ago"
-    },
-    {
-      id: "n-3",
-      title: "Free Health Check-up Camp",
-      message: "Scheduled on Oct 28, 2026 at Community Centre.",
-      link: "/services/healthcare",
-      is_read: true,
-      created_at: "4 days ago"
-    }
-  ]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationError, setNotificationError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    listNotifications()
+      .then((data) => {
+        if (!active) return;
+        setNotifications(data.items || []);
+        setUnreadCount(data.unread_count || 0);
+      })
+      .catch((err) => {
+        console.error("Unable to load notifications:", err);
+        if (active) setNotificationError("Notifications could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setNotificationsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [setUnreadCount]);
 
   const navLinks = [
     { label: "Home", to: "/app" },
@@ -51,9 +48,10 @@ export default function CitizenNavbar({ activeDomain = null }) {
       await markAllNotificationsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setUnreadCount(0);
-    } catch (e) {
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      setUnreadCount(0);
+      setNotificationError("");
+    } catch (err) {
+      console.error("Unable to mark notifications as read:", err);
+      setNotificationError("Notifications could not be marked as read.");
     }
   };
 
@@ -61,11 +59,15 @@ export default function CitizenNavbar({ activeDomain = null }) {
     if (!notif.is_read) {
       try {
         await markNotificationRead(notif.id);
-      } catch (e) {}
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
-      );
-      setUnreadCount((c) => Math.max(0, c - 1));
+        setNotifications((prev) =>
+          prev.map((n) => (n.id === notif.id ? { ...n, is_read: true } : n))
+        );
+        setUnreadCount((count) => Math.max(0, count - 1));
+        setNotificationError("");
+      } catch (err) {
+        console.error("Unable to mark notification as read:", err);
+        setNotificationError("Notification could not be marked as read.");
+      }
     }
     setShowNotifs(false);
   };
@@ -131,7 +133,19 @@ export default function CitizenNavbar({ activeDomain = null }) {
                   )}
                 </div>
                 <div className="max-h-72 overflow-y-auto divide-y divide-slate-50">
-                  {notifications.map((notif) => (
+                  {notificationError ? (
+                    <p role="status" className="px-4 py-6 text-center text-xs text-rose-700">
+                      {notificationError}
+                    </p>
+                  ) : notificationsLoading ? (
+                    <p className="px-4 py-6 text-center text-xs text-slate-500">
+                      Loading notifications...
+                    </p>
+                  ) : notifications.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-xs text-slate-500">
+                      You have no notifications.
+                    </p>
+                  ) : notifications.map((notif) => (
                     <Link
                       key={notif.id}
                       to={notif.link || "/app/complaints"}
@@ -142,7 +156,9 @@ export default function CitizenNavbar({ activeDomain = null }) {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-xs font-bold text-slate-900">{notif.title}</p>
-                        <span className="text-[10px] text-slate-400 shrink-0">{notif.created_at}</span>
+                        <span className="text-[10px] text-slate-400 shrink-0">
+                          {notif.created_at ? new Date(notif.created_at).toLocaleString() : ""}
+                        </span>
                       </div>
                       <p className="text-xs text-slate-600 mt-0.5 line-clamp-2">{notif.message}</p>
                     </Link>
@@ -161,7 +177,7 @@ export default function CitizenNavbar({ activeDomain = null }) {
             )}
           </div>
 
-          {/* User Profile Badge matching screenshot: Avatar "A", Name "Ananya Sharma", "Citizen" */}
+          {/* User profile */}
           <div className="relative">
             <button
               onClick={() => {
@@ -171,11 +187,11 @@ export default function CitizenNavbar({ activeDomain = null }) {
               className="flex items-center gap-2.5 p-1.5 pl-2 pr-3 rounded-xl border border-slate-200/80 hover:bg-slate-50 transition-colors text-left"
             >
               <div className="grid h-8 w-8 place-items-center rounded-full bg-blue-600 text-white font-bold text-sm shadow-sm">
-                {(user?.full_name || "Ananya Sharma")[0]}
+                {(user?.full_name || user?.email || "U")[0].toUpperCase()}
               </div>
               <div className="hidden sm:block text-left">
                 <p className="text-xs font-bold text-slate-900 leading-tight">
-                  {user?.full_name || "Ananya Sharma"}
+                  {user?.full_name || user?.email || "Account"}
                 </p>
                 <p className="text-[11px] font-medium text-slate-500 capitalize">
                   {user?.role || "Citizen"}
@@ -187,7 +203,7 @@ export default function CitizenNavbar({ activeDomain = null }) {
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-52 rounded-2xl bg-white shadow-elevated border border-slate-100 py-2 z-50">
                 <div className="px-4 py-2 border-b border-slate-100 sm:hidden">
-                  <p className="text-sm font-bold text-slate-900">{user?.full_name || "Ananya Sharma"}</p>
+                  <p className="text-sm font-bold text-slate-900">{user?.full_name || user?.email || "Account"}</p>
                   <p className="text-xs text-slate-500">{user?.email}</p>
                 </div>
                 <Link

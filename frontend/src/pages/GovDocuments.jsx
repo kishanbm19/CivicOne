@@ -15,20 +15,27 @@ import {
 import {
   listStaffDocuments,
   createDocument,
+  uploadDocument,
+  updateDocument,
   submitDocumentReview,
   approveDocument,
+  requestDocumentChanges,
+  rejectDocument,
   publishDocument,
   unpublishDocument
 } from "../services/documents";
 import { useAuth } from "../context/AuthContext";
 import { errMsg } from "../services/axios";
+import { listDepartments } from "../services/services";
 
 export default function GovDocuments() {
-  const { user } = useAuth();
+  const { user, staffProfile } = useAuth();
   const outletCtx = useOutletContext() || {};
   const activeDomain = outletCtx.domain || "transport";
+  const currentDepartment = outletCtx.currentDepartment;
 
   const [documents, setDocuments] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -38,16 +45,26 @@ export default function GovDocuments() {
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("announcement");
   const [isPublic, setIsPublic] = useState(true);
+  const [targetType, setTargetType] = useState("domain");
+  const [targetDepartmentId, setTargetDepartmentId] = useState("");
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [attachment, setAttachment] = useState(null);
+  const [editingDocument, setEditingDocument] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const canApproveOrPublish = user?.role === "dept_admin" || user?.role === "platform_admin";
+  const canApprove = staffProfile?.permissions?.can_approve_documents;
+  const canPublish = staffProfile?.permissions?.can_publish_documents;
 
   const loadDocuments = () => {
     setLoading(true);
-    listStaffDocuments({ domain: activeDomain })
-      .then((data) => setDocuments(data || []))
+    Promise.all([listStaffDocuments({ domain: activeDomain }), listDepartments()])
+      .then(([data, departmentData]) => {
+        setDocuments(data || []);
+        setDepartments(departmentData || []);
+      })
       .catch((err) => console.error("Error loading staff documents:", err))
       .finally(() => setLoading(false));
   };
@@ -61,17 +78,42 @@ export default function GovDocuments() {
     setError(null);
     setSubmitting(true);
     try {
-      await createDocument({
+      const request = {
         title,
         description,
         service_domain: activeDomain,
+        department_id: currentDepartment?.id || departments.find((d) => d.domain === activeDomain)?.id,
         category,
         is_public: isPublic,
-      });
-      setSuccess("New draft notice created.");
+        target_type: targetType,
+        target_department_id: targetType === "department" ? targetDepartmentId : undefined,
+        scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+        expiry_date: expiryDate ? new Date(expiryDate).toISOString() : undefined,
+      };
+      if (editingDocument) {
+        await updateDocument(editingDocument.id, {
+          title,
+          description,
+          category,
+          is_public: isPublic,
+        });
+        setSuccess("Document updated. Review it and submit it again.");
+      } else if (attachment) {
+        await uploadDocument(attachment, request);
+        setSuccess("Notice draft created with the attachment.");
+      } else {
+        await createDocument(request);
+        setSuccess("New draft notice created.");
+      }
       setShowUploadModal(false);
+      setEditingDocument(null);
       setTitle("");
       setDescription("");
+      setAttachment(null);
+      setScheduledAt("");
+      setExpiryDate("");
+      setTargetType("domain");
+      setTargetDepartmentId("");
       loadDocuments();
     } catch (err) {
       setError(errMsg(err));
@@ -120,6 +162,34 @@ export default function GovDocuments() {
     }
   };
 
+  const handleReviewFeedback = async (doc, action) => {
+    const message = window.prompt(
+      action === "reject" ? "Why is this document being rejected?" : "What changes are required?",
+    );
+    if (!message?.trim()) return;
+    try {
+      if (action === "reject") {
+        await rejectDocument(doc.id, message.trim());
+        setSuccess("Document rejected and the author notified.");
+      } else {
+        await requestDocumentChanges(doc.id, message.trim());
+        setSuccess("Changes requested and the author notified.");
+      }
+      loadDocuments();
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
+
+  const startEditing = (doc) => {
+    setEditingDocument(doc);
+    setTitle(doc.title);
+    setDescription(doc.description || "");
+    setCategory(doc.category || "announcement");
+    setIsPublic(doc.is_public);
+    setShowUploadModal(true);
+  };
+
   const filteredDocs = documents.filter((d) => {
     if (activeTab === "all") return true;
     return d.status === activeTab;
@@ -166,6 +236,8 @@ export default function GovDocuments() {
           { label: "Under Review", value: "review" },
           { label: "Approved", value: "approved" },
           { label: "Published", value: "published" },
+          { label: "Changes Requested", value: "changes_requested" },
+          { label: "Rejected", value: "rejected" },
         ].map((tab) => (
           <button
             key={tab.value}
@@ -214,6 +286,9 @@ export default function GovDocuments() {
                     <td className="py-3.5 px-4 font-semibold text-slate-900 max-w-sm">
                       <p className="truncate font-bold">{doc.title}</p>
                       <p className="text-[11px] text-slate-500 truncate">{doc.description}</p>
+                      {doc.review_feedback && (
+                        <p className="text-[11px] text-amber-700 truncate">Review: {doc.review_feedback}</p>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 font-medium capitalize text-slate-600">
                       {doc.service_domain}
@@ -250,17 +325,41 @@ export default function GovDocuments() {
                         )}
 
                         {/* Stage 2: Under Review -> Approve (Admin) */}
-                        {doc.status === "review" && canApproveOrPublish && (
-                          <button
-                            onClick={() => handleApprove(doc.id)}
-                            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
-                          >
-                            Approve
-                          </button>
+                        {doc.status === "review" && canApprove && (
+                          <>
+                            <button
+                              onClick={() => handleApprove(doc.id)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => handleReviewFeedback(doc, "changes")}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                            >
+                              Request Changes
+                            </button>
+                            <button
+                              onClick={() => handleReviewFeedback(doc, "reject")}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors"
+                            >
+                              Reject
+                            </button>
+                          </>
                         )}
 
+                        {["draft", "changes_requested"].includes(doc.status) &&
+                          (doc.author_id === user?.id || staffProfile?.permissions?.can_manage_staff) && (
+                            <button
+                              onClick={() => startEditing(doc)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                            >
+                              Edit
+                            </button>
+                          )}
+
                         {/* Stage 3: Approved -> Publish (Admin) */}
-                        {doc.status === "approved" && canApproveOrPublish && (
+                        {doc.status === "approved" && canPublish && (
                           <button
                             onClick={() => handlePublish(doc.id)}
                             className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
@@ -270,7 +369,7 @@ export default function GovDocuments() {
                         )}
 
                         {/* Published -> Archive */}
-                        {doc.status === "published" && canApproveOrPublish && (
+                        {doc.status === "published" && canPublish && (
                           <button
                             onClick={() => handleArchive(doc.id)}
                             className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
@@ -293,8 +392,13 @@ export default function GovDocuments() {
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="card p-6 sm:p-8 max-w-lg w-full border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-base">Create Notice or Announcement</h3>
-              <button onClick={() => setShowUploadModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+              <h3 className="font-bold text-slate-900 text-base">
+                {editingDocument ? "Edit Notice or Announcement" : "Create Notice or Announcement"}
+              </h3>
+              <button onClick={() => {
+                setShowUploadModal(false);
+                setEditingDocument(null);
+              }} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
             <form onSubmit={handleCreate} className="space-y-4 text-xs">
@@ -322,7 +426,7 @@ export default function GovDocuments() {
                 ></textarea>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {!editingDocument && <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Domain</label>
                   <input type="text" readOnly value={`${activeDomain} services`} className="input bg-slate-100 capitalize" />
@@ -331,12 +435,76 @@ export default function GovDocuments() {
                   <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Category</label>
                   <select value={category} onChange={(e) => setCategory(e.target.value)} className="input">
                     <option value="announcement">Announcement</option>
-                    <option value="notice">Notice</option>
+                    <option value="transport_update">Transport update</option>
+                    <option value="road_closure">Road closure</option>
+                    <option value="municipal_services">Municipal services</option>
+                    <option value="water_interruption">Water interruption</option>
+                    <option value="public_health_advisory">Public health advisory</option>
+                    <option value="notice">General notice</option>
                     <option value="infrastructure">Infrastructure</option>
                     <option value="alert">Alert</option>
                   </select>
                 </div>
+              </div>}
+
+              {!editingDocument && <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Audience</label>
+                  <select value={targetType} onChange={(e) => setTargetType(e.target.value)} className="input">
+                    <option value="domain">Service domain</option>
+                    <option value="department">Department</option>
+                    <option value="all">All citizens</option>
+                  </select>
+                </div>
+                {targetType === "department" && (
+                  <div>
+                    <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Target Department</label>
+                    <select
+                      value={targetDepartmentId}
+                      onChange={(e) => setTargetDepartmentId(e.target.value)}
+                      required
+                      className="input"
+                    >
+                      <option value="">Select department</option>
+                      {departments.filter((department) => department.domain === activeDomain).map((department) => (
+                        <option key={department.id} value={department.id}>{department.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
+              }
+
+              {!editingDocument && <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Publish At (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChange={(e) => setScheduledAt(e.target.value)}
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Expiry (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={expiryDate}
+                    onChange={(e) => setExpiryDate(e.target.value)}
+                    className="input"
+                  />
+                </div>
+              </div>}
+
+              {!editingDocument && <div>
+                <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Attachment (optional)</label>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                  onChange={(e) => setAttachment(e.target.files?.[0] || null)}
+                  className="input"
+                />
+              </div>}
 
               <div>
                 <label className="flex items-center gap-2 cursor-pointer pt-1">
@@ -351,9 +519,12 @@ export default function GovDocuments() {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowUploadModal(false)} className="btn-ghost">Cancel</button>
+                <button type="button" onClick={() => {
+                  setShowUploadModal(false);
+                  setEditingDocument(null);
+                }} className="btn-ghost">Cancel</button>
                 <button type="submit" disabled={submitting} className="btn">
-                  {submitting ? "Saving..." : "Save Draft"}
+                  {submitting ? "Saving..." : editingDocument ? "Save Changes" : "Save Draft"}
                 </button>
               </div>
             </form>

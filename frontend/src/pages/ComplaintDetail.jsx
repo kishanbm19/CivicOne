@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useOutletContext } from "react-router-dom";
 import {
   MapPin,
   Calendar,
@@ -23,15 +23,20 @@ import {
   updateComplaintStatus,
   assignComplaint,
   addInternalNote,
-  reopenComplaint
+  reopenComplaint,
+  requestComplaintInformation,
+  uploadComplaintEvidence,
+  listComplaintStaffOptions
 } from "../services/complaints";
+import { listDepartments } from "../services/services";
 import { useAuth } from "../context/AuthContext";
 import { errMsg } from "../services/axios";
 
 export default function ComplaintDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, staffProfile } = useAuth();
+  const outletCtx = useOutletContext() || {};
 
   const isStaff = user?.role !== "citizen";
 
@@ -47,6 +52,13 @@ export default function ComplaintDetail() {
   const [internalNoteText, setInternalNoteText] = useState("");
   const [reopenReason, setReopenReason] = useState("");
   const [submittingAction, setSubmittingAction] = useState(false);
+  const [staffOptions, setStaffOptions] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [assignmentDepartment, setAssignmentDepartment] = useState("");
+  const [assignmentStaff, setAssignmentStaff] = useState("");
+  const [informationRequestText, setInformationRequestText] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState(null);
+  const [evidenceCitizenVisible, setEvidenceCitizenVisible] = useState(true);
 
   const loadDetail = () => {
     setLoading(true);
@@ -54,6 +66,17 @@ export default function ComplaintDetail() {
       .then((data) => {
         setComplaint(data);
         setNewStatus(data.status);
+        setAssignmentDepartment(data.department_id || "");
+        setAssignmentStaff(data.assigned_to_user_id || "");
+        if (user?.role !== "citizen") {
+          Promise.all([
+            listComplaintStaffOptions(data.domain),
+            listDepartments(),
+          ]).then(([staff, depts]) => {
+            setStaffOptions(staff || []);
+            setDepartments(depts || []);
+          }).catch((err) => setError(errMsg(err)));
+        }
       })
       .catch((err) => {
         setError(errMsg(err));
@@ -120,6 +143,57 @@ export default function ComplaintDetail() {
     }
   };
 
+  const handleAssignment = async (e) => {
+    e.preventDefault();
+    setSubmittingAction(true);
+    setError(null);
+    try {
+      await assignComplaint(id, {
+        department_id: assignmentDepartment || undefined,
+        assigned_to_user_id: assignmentStaff || null,
+      });
+      setActionSuccess("Complaint assignment updated.");
+      loadDetail();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleInformationRequest = async (e) => {
+    e.preventDefault();
+    setSubmittingAction(true);
+    setError(null);
+    try {
+      await requestComplaintInformation(id, informationRequestText);
+      setActionSuccess("Additional information requested from the citizen.");
+      setInformationRequestText("");
+      loadDetail();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleEvidenceUpload = async (e) => {
+    e.preventDefault();
+    if (!evidenceFile) return;
+    setSubmittingAction(true);
+    setError(null);
+    try {
+      await uploadComplaintEvidence(id, evidenceFile, evidenceCitizenVisible);
+      setActionSuccess("Resolution evidence uploaded.");
+      setEvidenceFile(null);
+      loadDetail();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-16 text-center text-slate-500">
@@ -155,8 +229,22 @@ export default function ComplaintDetail() {
     "on_hold",
     "resolved",
     "closed",
-    "reopened"
+    "reopened",
+    "rejected"
   ];
+  const timeline = [
+    ...(complaint.history || []).map((item) => ({
+      ...item,
+      type: "status",
+      summary: item.reason,
+      sortTime: new Date(item.created_at).getTime(),
+    })),
+    ...(complaint.activities || []).map((item) => ({
+      ...item,
+      type: "activity",
+      sortTime: new Date(item.created_at).getTime(),
+    })),
+  ].sort((a, b) => a.sortTime - b.sortTime);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8">
@@ -229,6 +317,13 @@ export default function ComplaintDetail() {
               <span>{new Date(complaint.created_at).toLocaleString()}</span>
             </p>
           </div>
+          <div>
+            <span className="text-slate-400 font-medium block">Resolution Deadline:</span>
+            <p className="font-semibold text-slate-800 mt-0.5 flex items-center gap-1">
+              <Clock size={14} className="text-slate-400" />
+              <span>{complaint.resolution_due_at ? new Date(complaint.resolution_due_at).toLocaleString() : "No SLA configured"}</span>
+            </p>
+          </div>
         </div>
 
         {/* Description */}
@@ -260,6 +355,29 @@ export default function ComplaintDetail() {
           </div>
         )}
 
+        {complaint.evidence?.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Resolution Evidence
+            </h3>
+            <ul className="space-y-2">
+              {complaint.evidence.map((evidence) => (
+                <li key={evidence.id}>
+                  <a
+                    href={evidence.download_url}
+                    className="text-sm font-semibold text-blue-700 hover:underline"
+                  >
+                    {evidence.file_name}
+                  </a>
+                  <span className="ml-2 text-xs text-slate-400">
+                    {new Date(evidence.created_at).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* AI Classification Info */}
         <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-100 text-xs text-blue-900 space-y-1">
           <div className="flex items-center gap-1.5 font-bold">
@@ -281,6 +399,44 @@ export default function ComplaintDetail() {
           <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-3">
             Department Processing & Workflow
           </h2>
+
+          {staffProfile?.permissions?.can_assign && (
+            <form onSubmit={handleAssignment} className="space-y-3 border-b border-slate-100 pb-5">
+              <h3 className="font-bold text-slate-900 text-sm">Assign / Reassign Complaint</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <select
+                  value={assignmentDepartment}
+                  onChange={(e) => {
+                    setAssignmentDepartment(e.target.value);
+                    setAssignmentStaff("");
+                  }}
+                  className="input"
+                  required
+                >
+                  <option value="">Select department</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>{dept.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={assignmentStaff}
+                  onChange={(e) => setAssignmentStaff(e.target.value)}
+                  className="input"
+                  disabled={!assignmentDepartment}
+                >
+                  <option value="">Department queue (unassigned)</option>
+                  {staffOptions
+                    .filter((staff) => staff.department_id === assignmentDepartment)
+                    .map((staff) => (
+                      <option key={staff.user_id} value={staff.user_id}>{staff.full_name}</option>
+                    ))}
+                </select>
+              </div>
+              <button type="submit" disabled={submittingAction || !assignmentDepartment} className="btn text-xs">
+                Save Assignment
+              </button>
+            </form>
+          )}
 
           {/* Status Update Form */}
           <form onSubmit={handleStatusChange} className="space-y-4">
@@ -325,8 +481,13 @@ export default function ComplaintDetail() {
               <textarea
                 rows={2}
                 value={statusReason}
+                required={["resolved", "rejected"].includes(newStatus)}
                 onChange={(e) => setStatusReason(e.target.value)}
-                placeholder="Explain the update (e.g. dispatched repair crew, ordered replacement parts)..."
+                placeholder={newStatus === "resolved"
+                  ? "Required: record the resolution and work completed..."
+                  : newStatus === "rejected"
+                  ? "Required: explain why this complaint is rejected..."
+                  : "Explain the update (e.g. dispatched repair crew, ordered replacement parts)..."}
                 className="input"
               ></textarea>
             </div>
@@ -339,6 +500,51 @@ export default function ComplaintDetail() {
               Update Status
             </button>
           </form>
+
+          <div className="border-b border-slate-100 pb-5 space-y-3">
+            <h3 className="font-bold text-slate-900 text-sm">Request More Information</h3>
+            <form onSubmit={handleInformationRequest} className="space-y-2">
+              <textarea
+                rows={2}
+                value={informationRequestText}
+                onChange={(e) => setInformationRequestText(e.target.value)}
+                required
+                minLength={5}
+                maxLength={2000}
+                placeholder="Tell the citizen what information or clarification is needed..."
+                className="input text-xs"
+              />
+              <button type="submit" disabled={submittingAction} className="btn-ghost text-xs font-semibold">
+                Send Information Request
+              </button>
+            </form>
+          </div>
+
+          <div className="border-b border-slate-100 pb-5 space-y-3">
+            <h3 className="font-bold text-slate-900 text-sm">Resolution Evidence</h3>
+            <form onSubmit={handleEvidenceUpload} className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg,.webp,.txt"
+                onChange={(e) => setEvidenceFile(e.target.files?.[0] || null)}
+                className="input text-xs"
+              />
+              <label className="flex items-center gap-2 text-xs whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={evidenceCitizenVisible}
+                  onChange={(e) => setEvidenceCitizenVisible(e.target.checked)}
+                />
+                Citizen can view
+              </label>
+              <button type="submit" disabled={submittingAction || !evidenceFile} className="btn text-xs">
+                Upload Evidence
+              </button>
+            </form>
+            {complaint.priority === "high" || complaint.priority === "critical" ? (
+              <p className="text-xs text-amber-700">High-priority complaints require evidence before resolution.</p>
+            ) : null}
+          </div>
 
           {/* Internal Staff Notes (Staff Only) */}
           <div className="pt-6 border-t border-slate-100 space-y-4">
@@ -415,21 +621,27 @@ export default function ComplaintDetail() {
         </h2>
 
         <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200">
-          {(complaint.history || []).map((h, i) => (
+          {timeline.map((h, i) => (
             <div key={h.id || i} className="relative">
               <div className="absolute -left-6 top-1 grid h-5 w-5 place-items-center rounded-full bg-white ring-4 ring-slate-50 border-2 border-blue-500">
                 <div className="h-1.5 w-1.5 rounded-full bg-blue-600"></div>
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <StatusBadge status={h.new_status} />
+                  {h.type === "status" ? (
+                    <StatusBadge status={h.new_status} />
+                  ) : (
+                    <span className="text-xs font-semibold capitalize text-slate-700">
+                      {h.action?.replaceAll("_", " ")}
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400">
                     {new Date(h.created_at).toLocaleString()}
                   </span>
                 </div>
-                {h.reason && (
+                {h.summary && (
                   <p className="mt-1 text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                    {h.reason}
+                    {h.summary}
                   </p>
                 )}
                 <p className="text-[11px] text-slate-400 mt-1">

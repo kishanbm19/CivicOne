@@ -73,7 +73,7 @@ class Complaint(Base):
     address: Mapped[str] = mapped_column(String(300))  # strictly manual entry; no GPS
     locality: Mapped[str | None] = mapped_column(String(150), nullable=True)
     priority: Mapped[str] = mapped_column(String(15), default="medium", index=True)  # low | medium | high | critical
-    # Statuses: submitted | classified | assigned | acknowledged | in_progress | on_hold | resolved | closed | reopened
+    # Statuses: submitted | classified | assigned | acknowledged | in_progress | on_hold | resolved | closed | reopened | rejected
     status: Mapped[str] = mapped_column(String(20), default="submitted", index=True)
     department_id: Mapped[str | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
     assigned_to_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
@@ -83,6 +83,8 @@ class Complaint(Base):
     ai_confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
     ai_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
@@ -91,6 +93,8 @@ class Complaint(Base):
     assigned_staff: Mapped[User | None] = relationship(foreign_keys=[assigned_to_user_id])
     history: Mapped[list["StatusHistory"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="StatusHistory.created_at")
     internal_notes: Mapped[list["ComplaintInternalNote"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintInternalNote.created_at")
+    activities: Mapped[list["ComplaintActivity"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintActivity.created_at")
+    evidence: Mapped[list["ComplaintEvidence"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintEvidence.created_at")
 
 class StatusHistory(Base):
     __tablename__ = "complaint_status_history"
@@ -117,6 +121,46 @@ class ComplaintInternalNote(Base):
     complaint: Mapped[Complaint] = relationship(back_populates="internal_notes")
     author: Mapped[User] = relationship(foreign_keys=[author_id])
 
+class ComplaintActivity(Base):
+    __tablename__ = "complaint_activities"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    complaint_id: Mapped[str] = mapped_column(ForeignKey("complaints.id"), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(50), index=True)
+    summary: Mapped[str] = mapped_column(Text)
+    citizen_visible: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+    complaint: Mapped[Complaint] = relationship(back_populates="activities")
+    actor: Mapped[User] = relationship(foreign_keys=[actor_id])
+
+class ComplaintEvidence(Base):
+    __tablename__ = "complaint_evidence"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    complaint_id: Mapped[str] = mapped_column(ForeignKey("complaints.id"), index=True)
+    uploaded_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    file_path: Mapped[str] = mapped_column(String(500))
+    file_name: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    file_size: Mapped[int] = mapped_column(Integer)
+    citizen_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+    complaint: Mapped[Complaint] = relationship(back_populates="evidence")
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
+
+class DepartmentSLA(Base):
+    __tablename__ = "department_slas"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"), index=True)
+    category: Mapped[str] = mapped_column(String(50), index=True)
+    resolution_hours: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+    department: Mapped[Department] = relationship()
+    __table_args__ = (UniqueConstraint("department_id", "category"),)
+
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
@@ -129,11 +173,16 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     author_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     reviewer_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    review_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     publication_timestamp: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    target_type: Mapped[str] = mapped_column(String(20), default="domain")
+    target_department_id: Mapped[str | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
+    announcement_notifications_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

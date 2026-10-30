@@ -1,33 +1,37 @@
-import React, { useState } from "react";
-import { Link } from "react-router-dom";
-import { Mail, Lock, Key, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Mail, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import Logo from "../components/common/Logo";
 import { requestPasswordReset, confirmPasswordReset } from "../services/auth";
 import { errMsg } from "../services/axios";
 
 export default function PasswordReset() {
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [message, setMessage] = useState(null);
-  const [demoToken, setDemoToken] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // Read the reset token silently from the URL (?token=...).
+  const urlToken = searchParams.get("token");
+
+  // If a token is present in the URL, jump straight to the confirm step.
+  useEffect(() => {
+    if (urlToken) {
+      setStep(2);
+    }
+  }, [urlToken]);
+
+  // Step 1: user submits their email to request a reset link.
   const handleRequest = async (e) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const res = await requestPasswordReset(email);
-      setMessage("Reset instructions and demonstration token generated below.");
-      if (res.demo_token) {
-        setDemoToken(res.demo_token);
-        setToken(res.demo_token);
-      }
-      setStep(2);
+      await requestPasswordReset(email);
+      setStep(2); // show "check your email" notice
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -35,6 +39,7 @@ export default function PasswordReset() {
     }
   };
 
+  // Step 2: user has arrived via the reset link and sets a new password.
   const handleConfirm = async (e) => {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
@@ -44,7 +49,7 @@ export default function PasswordReset() {
     setError(null);
     setLoading(true);
     try {
-      await confirmPasswordReset(token, newPassword);
+      await confirmPasswordReset(urlToken, newPassword);
       setStep(3);
     } catch (err) {
       setError(errMsg(err));
@@ -76,6 +81,7 @@ export default function PasswordReset() {
             </div>
           )}
 
+          {/* ── Step 1: enter email ── */}
           {step === 1 && (
             <form onSubmit={handleRequest} className="space-y-4">
               <div>
@@ -99,39 +105,35 @@ export default function PasswordReset() {
                 disabled={loading}
                 className="w-full btn py-2.5 text-sm font-bold shadow-md mt-2"
               >
-                {loading ? "Generating Request..." : "Send Reset Token"}
+                {loading ? "Sending Reset Link..." : "Send Reset Link"}
               </button>
             </form>
           )}
 
-          {step === 2 && (
-            <form onSubmit={handleConfirm} className="space-y-4">
-              {demoToken && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-800 space-y-1">
-                  <p className="font-bold">Development Demo Token Generated:</p>
-                  <p className="font-mono text-[11px] break-all bg-white p-1.5 rounded border border-blue-100">
-                    {demoToken}
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-                  Reset Token
-                </label>
-                <div className="relative">
-                  <Key size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
-                    className="input pl-10"
-                    placeholder="Enter token received"
-                  />
-                </div>
+          {/* ── Step 2a: arrived from step 1 (no URL token) — show check-email notice ── */}
+          {step === 2 && !urlToken && (
+            <div className="text-center py-4 space-y-3">
+              <div className="grid h-12 w-12 place-items-center rounded-full bg-blue-100 text-blue-600 mx-auto">
+                <Mail size={24} />
               </div>
+              <h3 className="font-bold text-slate-900 text-lg">Check Your Email</h3>
+              <p className="text-xs text-slate-600">
+                If an account exists for that address, a password reset link has
+                been sent. Please check your inbox and follow the link to set a
+                new password.
+              </p>
+              <button
+                onClick={() => { setStep(1); setError(null); }}
+                className="text-xs text-blue-600 font-bold hover:underline"
+              >
+                Try a different address
+              </button>
+            </div>
+          )}
 
+          {/* ── Step 2b: arrived via reset link (?token=...) — show new-password form ── */}
+          {step === 2 && urlToken && (
+            <form onSubmit={handleConfirm} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
                   New Password
@@ -177,6 +179,7 @@ export default function PasswordReset() {
             </form>
           )}
 
+          {/* ── Step 3: success ── */}
           {step === 3 && (
             <div className="text-center py-4 space-y-4">
               <div className="grid h-12 w-12 place-items-center rounded-full bg-emerald-100 text-emerald-600 mx-auto">

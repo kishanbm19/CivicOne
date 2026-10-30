@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
-import { Search, Filter, RefreshCw, AlertCircle, CheckCircle2, ChevronRight, Plus } from "lucide-react";
+import { Search, Filter, RefreshCw, AlertCircle, CheckCircle2, ChevronRight } from "lucide-react";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
-import { listComplaints } from "../services/complaints";
+import { listComplaints, listComplaintStaffOptions } from "../services/complaints";
 
 export default function GovComplaints() {
   const navigate = useNavigate();
@@ -16,14 +16,26 @@ export default function GovComplaints() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [assignedStaffFilter, setAssignedStaffFilter] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [staffOptions, setStaffOptions] = useState([]);
   const [search, setSearch] = useState("");
 
   const fetchComplaints = () => {
     setLoading(true);
+    const endOfDay = endDate ? new Date(`${endDate}T23:59:59`).toISOString() : undefined;
     listComplaints({
       domain: activeDomain,
       status: statusFilter || undefined,
       priority: priorityFilter || undefined,
+      category: categoryFilter || undefined,
+      assigned_to_user_id: assignedStaffFilter || undefined,
+      start_date: startDate ? `${startDate}T00:00:00` : undefined,
+      end_date: endOfDay,
+      overdue_only: overdueOnly || undefined,
       search: search || undefined,
       assigned_to_me: activeTab === "assigned_to_me",
       size: 50,
@@ -35,7 +47,13 @@ export default function GovComplaints() {
 
   useEffect(() => {
     fetchComplaints();
-  }, [activeDomain, activeTab, statusFilter, priorityFilter]);
+  }, [activeDomain, activeTab, statusFilter, priorityFilter, categoryFilter, assignedStaffFilter, startDate, endDate, overdueOnly]);
+
+  useEffect(() => {
+    listComplaintStaffOptions(activeDomain)
+      .then(setStaffOptions)
+      .catch((err) => console.error("Error loading complaint staff filters:", err));
+  }, [activeDomain]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -54,12 +72,6 @@ export default function GovComplaints() {
             Review, assign, process, and resolve civic complaints within authorized department scope.
           </p>
         </div>
-        <button
-          onClick={() => navigate("/government/complaints/new")}
-          className="btn text-xs sm:text-sm font-semibold flex items-center gap-2 self-start sm:self-auto"
-        >
-          <Plus size={16} /> New Complaint
-        </button>
       </div>
 
       {/* Tabs */}
@@ -108,12 +120,57 @@ export default function GovComplaints() {
           >
             <option value="">All Statuses</option>
             <option value="submitted">Submitted</option>
+            <option value="rejected">Rejected</option>
             <option value="assigned">Assigned</option>
             <option value="in_progress">In Progress</option>
             <option value="on_hold">On Hold</option>
             <option value="resolved">Resolved</option>
             <option value="closed">Closed</option>
           </select>
+
+          <input
+            type="text"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            placeholder="Category"
+            aria-label="Filter by category"
+            className="input py-2 text-xs w-28"
+          />
+
+          <select
+            value={assignedStaffFilter}
+            onChange={(e) => setAssignedStaffFilter(e.target.value)}
+            aria-label="Filter by assigned staff"
+            className="input py-2 text-xs w-auto"
+          >
+            <option value="">All Staff</option>
+            {staffOptions.map((staff) => (
+              <option key={staff.user_id} value={staff.user_id}>{staff.full_name}</option>
+            ))}
+          </select>
+
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            aria-label="Created from"
+            className="input py-2 text-xs w-auto"
+          />
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            aria-label="Created through"
+            className="input py-2 text-xs w-auto"
+          />
+          <label className="flex items-center gap-1.5 px-2 text-xs font-semibold text-rose-700">
+            <input
+              type="checkbox"
+              checked={overdueOnly}
+              onChange={(e) => setOverdueOnly(e.target.checked)}
+            />
+            Overdue only
+          </label>
 
           {/* Priority Filter */}
           <select
