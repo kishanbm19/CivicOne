@@ -30,7 +30,6 @@ export default function NewComplaint() {
   // Step 2: Address (Strictly manual - no GPS/geolocation APIs)
   const [address, setAddress] = useState("");
   const [locality, setLocality] = useState("");
-  const [imageFile, setImageFile] = useState(null);
   const [imageUrl, setImageUrl] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
 
@@ -72,14 +71,15 @@ export default function NewComplaint() {
   const handleImageChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setImageFile(file);
+    setError(null);
+    setImageUrl("");
     setUploadingImage(true);
     try {
       const res = await uploadComplaintImage(file);
       setImageUrl(res.image_url);
     } catch (err) {
-      console.warn("Local upload error, fallback to mock url:", err);
-      setImageUrl(URL.createObjectURL(file));
+      console.error("Complaint photo upload failed:", err);
+      setError(`Photo could not be uploaded: ${errMsg(err)} You can choose another photo or submit without one.`);
     } finally {
       setUploadingImage(false);
     }
@@ -113,6 +113,10 @@ export default function NewComplaint() {
   };
 
   const handleSubmit = async () => {
+    if (uploadingImage) {
+      setError("Please wait for the photo upload to finish before submitting.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -391,12 +395,15 @@ export default function NewComplaint() {
               </p>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp,image/gif"
                 onChange={handleImageChange}
                 className="mt-3 block mx-auto text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
               />
               {uploadingImage && <p className="text-xs text-blue-600 mt-2">Uploading photograph...</p>}
               {imageUrl && <p className="text-xs text-emerald-600 font-semibold mt-2">✓ Photo attached</p>}
+              {!imageUrl && !uploadingImage && error?.startsWith("Photo could not be uploaded:") && (
+                <p className="text-xs text-slate-600 mt-2">Photo is optional; you may continue without an attachment.</p>
+              )}
             </div>
           </div>
 
@@ -425,9 +432,9 @@ export default function NewComplaint() {
           <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex items-start gap-3">
             <Sparkles size={20} className="text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-bold text-blue-900">AI-Powered Routing Active</p>
+            <p className="text-xs font-bold text-blue-900">Complaint classification and routing</p>
               <p className="text-xs text-blue-800 mt-0.5 leading-relaxed">
-                Upon submission, your complaint will be structured using OpenAI and verified with deterministic dispatch rules.
+              CivicOne will classify your report and route it to a matching department where possible. Uncertain or unassigned cases are sent for staff review. If the optional AI service is unavailable, rule-based classification is used.
               </p>
             </div>
           </div>
@@ -472,7 +479,7 @@ export default function NewComplaint() {
             </button>
             <button
               type="button"
-              disabled={submitting}
+              disabled={submitting || uploadingImage}
               onClick={handleSubmit}
               className="btn px-8 py-3 text-sm font-bold shadow-md flex items-center gap-2"
             >

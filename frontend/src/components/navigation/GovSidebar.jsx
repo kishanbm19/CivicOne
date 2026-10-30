@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Inbox,
   CheckSquare,
-  PlusCircle,
   FileText,
   BarChart3,
   Users,
@@ -116,13 +115,6 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
               <CheckSquare size={16} />
               <span>All Complaints</span>
             </Link>
-            <Link
-              to="/government/complaints/new"
-              className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs text-slate-300 ${currentTheme.hoverBg}`}
-            >
-              <PlusCircle size={16} />
-              <span>Create Complaint</span>
-            </Link>
           </div>
 
           {/* Domain Services */}
@@ -166,7 +158,7 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
           </div>
 
           {/* Administration (for Dept & Platform Admin) */}
-          {(user?.role === "dept_admin" || user?.role === "platform_admin") && (
+          {staffProfile?.permissions?.can_manage_staff && (
             <div className="pt-3">
               <p className="px-3 text-[11px] font-bold tracking-wider uppercase text-slate-400/80 mb-1">
                 Administration

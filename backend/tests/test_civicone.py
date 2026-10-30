@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -6,7 +7,8 @@ from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.core.database import Base, get_db
 from app.core.security import hash_password, create_access_token
-from app.models import User, Organization, Department, DepartmentMembership, Complaint, StatusHistory, Document, ConsentGrant
+from app.services.operations import archive_expired_announcements
+from app.models import User, Organization, Department, DepartmentMembership, Complaint, StatusHistory, Document, ConsentGrant, Notification
 
 # Shared StaticPool in-memory SQLite database
 test_engine = create_engine(
@@ -73,9 +75,66 @@ def setup_database():
 
 client = TestClient(app)
 
+def test_vite_loopback_origins_are_allowed_for_api_requests():
+    response = client.options(
+        "/api/v1/complaints",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+
 def auth_headers(user_id: str):
     token = create_access_token(user_id)
     return {"Authorization": f"Bearer {token}"}
+
+def test_public_analytics_reports_empty_database_without_demo_values():
+    response = client.get("/api/v1/analytics/public")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "total_complaints": 0,
+        "issues_resolved": 0,
+        "in_progress": 0,
+        "resolution_rate": None,
+        "requests_by_domain": {},
+    }
+
+def test_public_analytics_reports_saved_complaints_by_domain():
+    with TestingSessionLocal() as db:
+        db.add_all([
+            Complaint(
+                reference=f"DB-PUBLIC-{status}",
+                citizen_id="cit-001",
+                domain="transport",
+                title="Saved public metric fixture",
+                description="Used to verify aggregate analytics.",
+                category="bus_delay",
+                address="Test address",
+                status=status,
+            )
+            for status in ("assigned", "in_progress", "resolved")
+        ])
+        db.commit()
+
+    response = client.get("/api/v1/analytics/public")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_complaints"] == 3
+    assert data["issues_resolved"] == 1
+    assert data["in_progress"] == 2
+    assert data["resolution_rate"] == 33
+    assert data["requests_by_domain"]["transport"] == {
+        "total": 3,
+        "resolved": 1,
+        "in_progress": 2,
+        "pending": 0,
+        "rejected": 0,
+    }
 
 def test_registration_and_portal_isolation():
     # 1. Register new citizen
@@ -241,3 +300,284 @@ def test_consent_grant_and_revocation():
     rev_res = client.post(f"/api/v1/consent/{grant_id}/revoke", headers=headers)
     assert rev_res.status_code == 200
     assert rev_res.json()["status"] == "revoked"
+
+def _create_transport_complaint():
+    response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
+        "domain": "transport",
+        "title": "Bus delay on Route 45",
+        "description": "The scheduled bus did not arrive at the stop.",
+        "category": "bus_delay",
+        "address": "Central Stand",
+        "locality": "Central",
+    })
+    assert response.status_code == 201
+    return response.json()
+
+def test_assignment_requires_supervisor_and_notifies_citizen():
+    complaint = _create_transport_complaint()
+    headers = auth_headers("stf-001")
+    with TestingSessionLocal() as db:
+        department = db.scalar(select(Department))
+        membership = db.scalar(select(DepartmentMembership).where(
+            DepartmentMembership.user_id == "stf-001"
+        ))
+        department_id = department.id
+        membership_id = membership.id
+
+    assignment = {
+        "department_id": department_id,
+        "assigned_to_user_id": "stf-001",
+    }
+    denied = client.post(
+        f"/api/v1/complaints/{complaint['id']}/assign",
+        headers=headers,
+        json=assignment,
+    )
+    assert denied.status_code == 403
+
+    admin_headers = auth_headers("adm-001")
+    role_update = client.put(
+        f"/api/v1/admin/staff/{membership_id}",
+        headers=admin_headers,
+        json={"role_in_dept": "supervisor", "is_active": True},
+    )
+    assert role_update.status_code == 200
+
+    allowed = client.post(
+        f"/api/v1/complaints/{complaint['id']}/assign",
+        headers=headers,
+        json=assignment,
+    )
+    assert allowed.status_code == 200
+
+    with TestingSessionLocal() as db:
+        department = db.get(Department, department_id)
+        other_department = Department(
+            organization_id=department.organization_id,
+            name="Other Operations",
+            category_key="roads",
+        )
+        db.add(other_department)
+        db.flush()
+        cross_department_complaint = Complaint(
+            reference="#M-2026-9901",
+            citizen_id="cit-001",
+            domain="municipal",
+            title="Cross-department record",
+            description="This record belongs to a department without staff membership.",
+            category="roads",
+            address="Main Road",
+            department_id=other_department.id,
+            assigned_to_user_id="stf-001",
+            status="assigned",
+        )
+        db.add(cross_department_complaint)
+        db.commit()
+        cross_department_id = cross_department_complaint.id
+    hidden = client.get(
+        f"/api/v1/complaints/{cross_department_id}",
+        headers=headers,
+    )
+    assert hidden.status_code == 404
+
+    with TestingSessionLocal() as db:
+        citizen_notifications = db.scalars(
+            select(Notification).where(
+                Notification.user_id == "cit-001",
+                Notification.notification_type == "complaint_assigned",
+            )
+        ).all()
+    assert citizen_notifications
+
+def test_sla_configuration_sets_deadlines_on_open_complaints():
+    complaint = _create_transport_complaint()
+    with TestingSessionLocal() as db:
+        department_id = db.scalar(select(Department.id))
+
+    response = client.put(
+        "/api/v1/admin/slas",
+        headers=auth_headers("adm-001"),
+        json={
+            "department_id": department_id,
+            "category": complaint["category"],
+            "resolution_hours": 12,
+        },
+    )
+    assert response.status_code == 200
+
+    detail = client.get(
+        f"/api/v1/complaints/{complaint['id']}",
+        headers=auth_headers("stf-001"),
+    )
+    assert detail.status_code == 200
+    assert detail.json()["resolution_due_at"] is not None
+
+    metrics = client.get(
+        "/api/v1/analytics/department?domain=transport",
+        headers=auth_headers("stf-001"),
+    )
+    assert metrics.status_code == 200
+    assert metrics.json()["total"] >= 1
+    assert "announcement_stats" in metrics.json()
+
+def test_scheduled_announcement_targets_citizens_and_expires():
+    headers_staff = auth_headers("stf-001")
+    headers_admin = auth_headers("adm-001")
+    future = datetime.now(timezone.utc) + timedelta(days=2)
+    expiry = future + timedelta(days=3)
+    draft = client.post("/api/v1/documents", headers=headers_staff, json={
+        "title": "Scheduled service update",
+        "description": "A planned transport service update.",
+        "service_domain": "transport",
+        "category": "transport_update",
+        "is_public": True,
+        "target_type": "all",
+        "scheduled_at": future.isoformat(),
+        "expiry_date": expiry.isoformat(),
+    })
+    assert draft.status_code == 201
+    document_id = draft.json()["id"]
+
+    assert client.post(
+        f"/api/v1/documents/{document_id}/submit-review",
+        headers=headers_staff,
+    ).status_code == 200
+    assert client.post(
+        f"/api/v1/documents/{document_id}/approve",
+        headers=headers_admin,
+    ).status_code == 200
+    assert client.post(
+        f"/api/v1/documents/{document_id}/publish",
+        headers=headers_admin,
+    ).status_code == 200
+
+    future_result = client.get("/api/v1/documents/public?domain=municipal")
+    assert future_result.status_code == 200
+    assert document_id not in {item["id"] for item in future_result.json()["items"]}
+
+    with TestingSessionLocal() as db:
+        document = db.get(Document, document_id)
+        document.scheduled_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+    public_result = client.get("/api/v1/documents/public?domain=municipal")
+    assert document_id in {item["id"] for item in public_result.json()["items"]}
+    with TestingSessionLocal() as db:
+        assert db.scalar(select(Notification.id).where(
+            Notification.user_id == "cit-001",
+            Notification.notification_type == "announcement",
+        ))
+        document = db.get(Document, document_id)
+        document.expiry_date = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+        assert archive_expired_announcements(db) == 1
+        assert document.status == "archived"
+    expired_result = client.get("/api/v1/documents/public?domain=municipal")
+    assert document_id not in {item["id"] for item in expired_result.json()["items"]}
+
+def test_document_review_can_request_changes_and_reject():
+    staff_headers = auth_headers("stf-001")
+    admin_headers = auth_headers("adm-001")
+    draft = client.post("/api/v1/documents", headers=staff_headers, json={
+        "title": "Review workflow notice",
+        "description": "A draft needing review.",
+        "service_domain": "transport",
+        "category": "notice",
+    })
+    assert draft.status_code == 201
+    document_id = draft.json()["id"]
+    assert client.post(
+        f"/api/v1/documents/{document_id}/submit-review",
+        headers=staff_headers,
+    ).status_code == 200
+
+    changes = client.post(
+        f"/api/v1/documents/{document_id}/request-changes",
+        headers=admin_headers,
+        json={"message": "Please include the effective date."},
+    )
+    assert changes.status_code == 200
+    assert changes.json()["status"] == "changes_requested"
+    assert changes.json()["review_feedback"] == "Please include the effective date."
+
+    edit = client.patch(
+        f"/api/v1/documents/{document_id}",
+        headers=staff_headers,
+        json={"description": "Updated draft with effective date."},
+    )
+    assert edit.status_code == 200
+    assert edit.json()["status"] == "draft"
+
+    assert client.post(
+        f"/api/v1/documents/{document_id}/submit-review",
+        headers=staff_headers,
+    ).status_code == 200
+    rejected = client.post(
+        f"/api/v1/documents/{document_id}/reject",
+        headers=admin_headers,
+        json={"message": "This notice is not appropriate for publication."},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    assert client.post(
+        f"/api/v1/documents/{document_id}/publish",
+        headers=admin_headers,
+    ).status_code == 400
+
+def test_overdue_sla_escalates_once_to_supervisor():
+    complaint = _create_transport_complaint()
+    with TestingSessionLocal() as db:
+        department_id = db.scalar(select(Department.id))
+        membership = db.scalar(select(DepartmentMembership).where(
+            DepartmentMembership.user_id == "stf-001"
+        ))
+        membership.role_in_dept = "supervisor"
+        row = db.get(Complaint, complaint["id"])
+        row.resolution_due_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        db.commit()
+
+    first = client.get(
+        "/api/v1/analytics/department?domain=transport",
+        headers=auth_headers("stf-001"),
+    )
+    assert first.status_code == 200
+    with TestingSessionLocal() as db:
+        escalations = db.scalars(select(Notification).where(
+            Notification.user_id == "stf-001",
+            Notification.notification_type == "complaint_escalation",
+        )).all()
+    assert len(escalations) == 1
+
+    second = client.get(
+        "/api/v1/analytics/department?domain=transport",
+        headers=auth_headers("stf-001"),
+    )
+    assert second.status_code == 200
+    with TestingSessionLocal() as db:
+        escalations = db.scalars(select(Notification).where(
+            Notification.user_id == "stf-001",
+            Notification.notification_type == "complaint_escalation",
+        )).all()
+    assert len(escalations) == 1
+
+def test_resolution_remarks_and_high_priority_evidence_are_required():
+    complaint = _create_transport_complaint()
+    with TestingSessionLocal() as db:
+        row = db.get(Complaint, complaint["id"])
+        row.priority = "high"
+        row.status = "in_progress"
+        db.commit()
+
+    headers = auth_headers("stf-001")
+    missing_remarks = client.post(
+        f"/api/v1/complaints/{complaint['id']}/status",
+        headers=headers,
+        json={"new_status": "resolved"},
+    )
+    assert missing_remarks.status_code == 422
+
+    missing_evidence = client.post(
+        f"/api/v1/complaints/{complaint['id']}/status",
+        headers=headers,
+        json={"new_status": "resolved", "reason": "Repair crew replaced the damaged panel."},
+    )
+    assert missing_evidence.status_code == 422

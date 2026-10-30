@@ -5,6 +5,13 @@ export const listComplaints = async (params = {}) => {
   return res.data;
 };
 
+export const listComplaintStaffOptions = async (domain) => {
+  const res = await api.get("/complaints/staff-options", {
+    params: domain ? { domain } : {},
+  });
+  return res.data;
+};
+
 export const getComplaint = async (id) => {
   const res = await api.get(`/complaints/${id}`);
   return res.data;
@@ -27,6 +34,21 @@ export const assignComplaint = async (id, data) => {
 
 export const addInternalNote = async (id, note) => {
   const res = await api.post(`/complaints/${id}/notes`, { note });
+  return res.data;
+};
+
+export const requestComplaintInformation = async (id, message) => {
+  const res = await api.post(`/complaints/${id}/request-information`, { message });
+  return res.data;
+};
+
+export const uploadComplaintEvidence = async (id, file, citizenVisible = true) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("citizen_visible", String(citizenVisible));
+  const res = await api.post(`/complaints/${id}/evidence`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
   return res.data;
 };
 

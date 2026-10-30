@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
 
     # Maximum password-reset requests per IP per window (simple DB-backed counter).
-    PASSWORD_RESET_RATE_LIMIT: int = 5
-    PASSWORD_RESET_RATE_WINDOW_MINUTES: int = 60
+    PASSWORD_RESET_RATE_LIMIT: int = 100
+    PASSWORD_RESET_RATE_WINDOW_MINUTES: int = 1
     # Token validity window in minutes.
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 20
 

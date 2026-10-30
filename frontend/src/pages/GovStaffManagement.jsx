@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { Users, UserPlus, Shield, CheckCircle2, AlertCircle } from "lucide-react";
-import { listStaff, provisionStaff, listDepartments } from "../services/services";
+import { listStaff, provisionStaff, listDepartments, updateStaffMembership } from "../services/services";
 import { errMsg } from "../services/axios";
+import { useAuth } from "../context/AuthContext";
 
 export default function GovStaffManagement() {
+  const { staffProfile } = useAuth();
+  const canManageStaff = staffProfile?.permissions?.can_manage_staff;
   const [staff, setStaff] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,12 +22,15 @@ export default function GovStaffManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [savingMembership, setSavingMembership] = useState("");
+  const [membershipRoles, setMembershipRoles] = useState({});
 
   const loadData = () => {
     setLoading(true);
     Promise.all([listStaff(), listDepartments()])
       .then(([sData, dData]) => {
         setStaff(sData || []);
+        setMembershipRoles(Object.fromEntries((sData || []).map((member) => [member.membership_id, member.role_in_dept])));
         setDepartments(dData || []);
         if (dData?.length > 0) setDeptId(dData[0].id);
       })
@@ -32,9 +38,27 @@ export default function GovStaffManagement() {
       .finally(() => setLoading(false));
   };
 
+  const handleMembershipUpdate = async (member, isActive = member.is_active) => {
+    setError(null);
+    setSuccess(null);
+    setSavingMembership(member.membership_id);
+    try {
+      await updateStaffMembership(member.membership_id, {
+        role_in_dept: membershipRoles[member.membership_id] || member.role_in_dept,
+        is_active: isActive,
+      });
+      setSuccess(`Department membership for ${member.full_name} updated.`);
+      loadData();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setSavingMembership("");
+    }
+  };
+
   useEffect(() => {
-    loadData();
-  }, []);
+    if (canManageStaff) loadData();
+  }, [canManageStaff]);
 
   const handleProvision = async (e) => {
     e.preventDefault();
@@ -75,13 +99,19 @@ export default function GovStaffManagement() {
             Provision authorized government responders and manage department role assignments.
           </p>
         </div>
-        <button
+        {canManageStaff && <button
           onClick={() => setShowModal(true)}
           className="btn text-xs sm:text-sm font-semibold flex items-center gap-2 self-start sm:self-auto"
         >
           <UserPlus size={16} /> Provision Staff Member
-        </button>
+        </button>}
       </div>
+
+      {!canManageStaff && (
+        <div className="card p-6 text-sm text-slate-600 border border-slate-200">
+          You do not have department staff-management permissions.
+        </div>
+      )}
 
       {success && (
         <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-2">
@@ -109,18 +139,20 @@ export default function GovStaffManagement() {
                 <th className="py-3 px-4">Domain</th>
                 <th className="py-3 px-4">Platform Role</th>
                 <th className="py-3 px-4">Department Role</th>
+                <th className="py-3 px-4">Membership</th>
+                <th className="py-3 px-4">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="6" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
                     Loading staff memberships...
                   </td>
                 </tr>
               ) : staff.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
                     No active staff memberships found.
                   </td>
                 </tr>
@@ -144,8 +176,43 @@ export default function GovStaffManagement() {
                         {m.role?.replace("_", " ")}
                       </span>
                     </td>
-                    <td className="py-3.5 px-4 capitalize text-slate-600 font-semibold">
-                      {m.role_in_dept}
+                    <td className="py-3.5 px-4">
+                      <select
+                        value={membershipRoles[m.membership_id] || m.role_in_dept}
+                        onChange={(e) => setMembershipRoles((roles) => ({
+                          ...roles,
+                          [m.membership_id]: e.target.value,
+                        }))}
+                        className="input text-xs"
+                      >
+                        <option value="staff">Staff</option>
+                        <option value="supervisor">Manager / Supervisor</option>
+                        <option value="department_admin">Department Admin</option>
+                        <option value="public_information_officer">Public Information Officer</option>
+                      </select>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className={m.is_active ? "text-emerald-700" : "text-slate-400"}>
+                        {m.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <button
+                        onClick={() => handleMembershipUpdate(m)}
+                        disabled={savingMembership === m.membership_id}
+                        className="text-xs font-semibold text-blue-700 hover:underline disabled:opacity-50"
+                      >
+                        {savingMembership === m.membership_id
+                          ? "Saving..."
+                          : "Save Role"}
+                      </button>
+                      <button
+                        onClick={() => handleMembershipUpdate(m, !m.is_active)}
+                        disabled={savingMembership === m.membership_id}
+                        className="ml-3 text-xs font-semibold text-slate-600 hover:underline disabled:opacity-50"
+                      >
+                        {m.is_active ? "Deactivate" : "Activate"}
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -224,8 +291,9 @@ export default function GovStaffManagement() {
                 <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Department Role</label>
                 <select value={roleInDept} onChange={(e) => setRoleInDept(e.target.value)} className="input">
                   <option value="staff">Staff</option>
-                  <option value="supervisor">Supervisor</option>
-                  <option value="manager">Manager</option>
+                  <option value="supervisor">Manager / Supervisor</option>
+                  <option value="department_admin">Department Admin</option>
+                  <option value="public_information_officer">Public Information Officer</option>
                 </select>
               </div>
 

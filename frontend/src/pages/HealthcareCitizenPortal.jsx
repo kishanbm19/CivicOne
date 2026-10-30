@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   HeartPulse,
@@ -14,10 +14,24 @@ import {
 } from "lucide-react";
 import { HealthcareHeroIllustration } from "../components/common/HeroIllustrations";
 import NoticeCard from "../components/dashboard/NoticeCard";
+import { listPublicDocuments } from "../services/documents";
 
 export default function HealthcareCitizenPortal() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
+  const [initiatives, setInitiatives] = useState([]);
+  const [noticesLoading, setNoticesLoading] = useState(true);
+  const [noticesError, setNoticesError] = useState(false);
+
+  useEffect(() => {
+    listPublicDocuments({ domain: "healthcare", size: 3 })
+      .then((data) => setInitiatives(data.items || []))
+      .catch((err) => {
+        console.error("Unable to load healthcare notices:", err);
+        setNoticesError(true);
+      })
+      .finally(() => setNoticesLoading(false));
+  }, []);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -54,35 +68,8 @@ export default function HealthcareCitizenPortal() {
       desc: "Access health schemes, camps and information",
       icon: Heart,
       color: "bg-rose-50 text-rose-600 border-rose-200",
-      action: () => navigate("/app/notices?domain=healthcare"),
+      action: () => navigate("/notices?domain=healthcare"),
       btnText: "Explore schemes",
-    },
-  ];
-
-  const initiatives = [
-    {
-      title: "Free Health Check-up Camp",
-      desc: "General health check-up camp on Oct 28, 2026. Free BP, sugar, and vision screenings.",
-      date: "Oct 21, 2026",
-      badge: "Health Camp",
-      badgeType: "health_camp",
-      image: "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=600&auto=format&fit=crop&q=80",
-    },
-    {
-      title: "New PHC at Hunsur Road",
-      desc: "Primary health centre now open for citizens offering diagnostic labs and care.",
-      date: "Oct 18, 2026",
-      badge: "Facility Update",
-      badgeType: "facility_update",
-      image: "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=600&auto=format&fit=crop&q=80",
-    },
-    {
-      title: "Vaccination Drive",
-      desc: "COVID-19 booster dose drive at all PHCs and civic health dispensaries.",
-      date: "Oct 15, 2026",
-      badge: "Announcement",
-      badgeType: "announcement",
-      image: "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?w=600&auto=format&fit=crop&q=80",
     },
   ];
 
@@ -173,27 +160,36 @@ export default function HealthcareCitizenPortal() {
             <p className="text-xs text-slate-500">Public health programs, camps, and facility developments</p>
           </div>
           <Link
-            to="/app/notices?domain=healthcare"
+            to="/notices?domain=healthcare"
             className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:underline"
           >
             View All
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {noticesLoading ? (
+          <div className="card p-6 text-sm text-slate-500">Loading published notices...</div>
+        ) : noticesError ? (
+          <p role="status" className="card p-6 text-sm text-rose-700">
+            Healthcare notices could not be loaded. Please try again later.
+          </p>
+        ) : initiatives.length === 0 ? (
+          <div className="card p-6 text-sm text-slate-500">There are no published healthcare notices at this time.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {initiatives.map((item) => (
             <NoticeCard
-              key={item.title}
+              key={item.id}
               title={item.title}
-              description={item.desc}
-              date={item.date}
-              badgeText={item.badge}
-              badgeType={item.badgeType}
-              image={item.image}
-              onClick={() => navigate("/app/notices?domain=healthcare")}
+              description={item.description || "Open this notice for more information."}
+              date={item.created_at ? new Date(item.created_at).toLocaleDateString() : ""}
+              badgeText={item.category?.replaceAll("_", " ") || "Announcement"}
+              badgeType={item.category}
+              onClick={() => navigate("/notices?domain=healthcare")}
             />
           ))}
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );

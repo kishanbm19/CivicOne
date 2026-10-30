@@ -94,6 +94,7 @@ def run():
 
         # Citizen from screenshot
         u_citizen = create_user("citizen@demo.civicone.test", "Ananya Sharma", "citizen", "Citizen#1234", "9845012345")
+        u_kishan = create_user("kishan@gmail.com", "Kishan", "citizen", "Citizen#1234", "9845012346")
 
         # Staff accounts from screenshot
         u_trans_staff = create_user("transport@demo.civicone.test", "Rajesh Kumar", "staff", "Staff#1234", "9845054321")
@@ -101,20 +102,52 @@ def run():
         u_muni_alt = create_user("municipal@demo.civicone.test", "Priya Singh", "staff", "Staff#1234", "9845067890")
         u_health_staff = create_user("healthcare@demo.civicone.test", "Dr. Amit Patel", "staff", "Staff#1234", "9845098765")
 
-        # Administrators
+        # Additional Government Staff & Admins
+        u_kavya = create_user("kavya@transport.in", "Kavya Nair", "staff", "Staff#1234", "9845054322")
+        u_arjun = create_user("arjun@transport.in", "Arjun V", "staff", "Staff#1234", "9845054323")
+        u_rohan = create_user("rohan@transport.in", "Rohan Mehta", "staff", "Staff#1234", "9845054324")
+        u_sandeep = create_user("sandeep@transport.in", "Sandeep K", "dept_admin", "Admin#1234", "9845054325")
+
+        u_sunita = create_user("sunita@municipal.in", "Sunita Sharma", "staff", "Staff#1234", "9845067891")
+        u_deepak = create_user("deepak@municipal.in", "Deepak Verma", "staff", "Staff#1234", "9845067892")
+        u_manoj = create_user("manoj@municipal.in", "Manoj Tiwari", "staff", "Staff#1234", "9845067893")
+        u_pooja = create_user("pooja@municipal.in", "Pooja Hegde", "staff", "Staff#1234", "9845067894")
+        u_vikas = create_user("vikas@municipal.in", "Vikas Rao", "staff", "Staff#1234", "9845067895")
+        u_manisha = create_user("manisha@municipal.in", "Manisha Joshi", "dept_admin", "Admin#1234", "9845067896")
+
+        u_vikram = create_user("vikram@healthcare.in", "Vikram Singh", "staff", "Staff#1234", "9845098766")
+        u_shalini = create_user("shalini@healthcare.in", "Shalini Gupta", "staff", "Staff#1234", "9845098767")
+        u_pradeep = create_user("pradeep@healthcare.in", "Dr. Pradeep Roy", "dept_admin", "Admin#1234", "9845098768")
+
+        # Platform Administrators
         u_dept_admin = create_user("admin.dept@demo.civicone.test", "Kavita Rao", "dept_admin", "Admin#1234", "9845011223")
         u_plat_admin = create_user("admin@demo.civicone.test", "Suresh Mehta", "platform_admin", "Admin#1234", "9845099887")
+        u_gaurav = create_user("gaurav@admin.in", "Gaurav Sen", "platform_admin", "Admin#1234", "9845099888")
+        u_harish = create_user("harish@admin.in", "Harish Iyer", "platform_admin", "Admin#1234", "9845099889")
 
         # Department Memberships
         db.add(DepartmentMembership(user_id=u_trans_staff.id, department_id=d_bus_ops.id, role_in_dept="staff"))
         db.add(DepartmentMembership(user_id=u_trans_staff.id, department_id=d_bus_infra.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_kavya.id, department_id=d_bus_ops.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_arjun.id, department_id=d_bus_ops.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_rohan.id, department_id=d_bus_infra.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_sandeep.id, department_id=d_bus_ops.id, role_in_dept="lead"))
 
         db.add(DepartmentMembership(user_id=u_muni_staff.id, department_id=d_sanitation.id, role_in_dept="staff"))
         db.add(DepartmentMembership(user_id=u_muni_staff.id, department_id=d_roads.id, role_in_dept="staff"))
         db.add(DepartmentMembership(user_id=u_muni_alt.id, department_id=d_sanitation.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_sunita.id, department_id=d_sanitation.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_deepak.id, department_id=d_roads.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_manoj.id, department_id=d_lights.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_pooja.id, department_id=d_water.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_vikas.id, department_id=d_drainage.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_manisha.id, department_id=d_sanitation.id, role_in_dept="lead"))
 
         db.add(DepartmentMembership(user_id=u_health_staff.id, department_id=d_hosp.id, role_in_dept="staff"))
         db.add(DepartmentMembership(user_id=u_health_staff.id, department_id=d_fac_mgmt.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_vikram.id, department_id=d_hosp.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_shalini.id, department_id=d_fac_mgmt.id, role_in_dept="staff"))
+        db.add(DepartmentMembership(user_id=u_pradeep.id, department_id=d_hosp.id, role_in_dept="lead"))
 
         db.add(DepartmentMembership(user_id=u_dept_admin.id, department_id=d_roads.id, role_in_dept="supervisor"))
         db.flush()

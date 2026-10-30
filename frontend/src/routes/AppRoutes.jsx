@@ -113,7 +113,6 @@ export default function AppRoutes() {
       >
         <Route index element={<GovDashboard />} />
         <Route path="complaints" element={<GovComplaints />} />
-        <Route path="complaints/new" element={<NewComplaint />} />
         <Route path="complaints/:id" element={<ComplaintDetail />} />
         <Route path="documents" element={<GovDocuments />} />
         <Route path="analytics" element={<GovAnalytics />} />

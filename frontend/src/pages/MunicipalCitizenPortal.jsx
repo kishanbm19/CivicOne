@@ -6,32 +6,41 @@ import {
   Lightbulb,
   Droplets,
   Search,
+  ArrowRight,
+  ClipboardList,
   CheckCircle,
   Clock,
-  ShieldCheck,
-  Timer,
-  Calendar,
-  AlertTriangle,
-  Wrench,
-  ArrowRight
+  ShieldCheck
 } from "lucide-react";
 import { MunicipalHeroIllustration } from "../components/common/HeroIllustrations";
 import StatCard from "../components/dashboard/StatCard";
 import NoticeCard from "../components/dashboard/NoticeCard";
 import { getPublicStats } from "../services/services";
+import { listPublicDocuments } from "../services/documents";
 
 export default function MunicipalCitizenPortal() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
-  const [stats, setStats] = useState({
-    issues_resolved: 1245,
-    in_progress: 320,
-    resolution_rate: "95%",
-    avg_resolution_time: "2.4 Days"
-  });
+  const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState(false);
+  const [notices, setNotices] = useState([]);
+  const [noticesLoading, setNoticesLoading] = useState(true);
+  const [noticesError, setNoticesError] = useState(false);
 
   useEffect(() => {
-    getPublicStats().then(setStats).catch(() => {});
+    getPublicStats("municipal")
+      .then(setStats)
+      .catch((err) => {
+        console.error("Unable to load public service statistics:", err);
+        setStatsError(true);
+      });
+    listPublicDocuments({ domain: "municipal", size: 3 })
+      .then((data) => setNotices(data.items || []))
+      .catch((err) => {
+        console.error("Unable to load municipal notices:", err);
+        setNoticesError(true);
+      })
+      .finally(() => setNoticesLoading(false));
   }, []);
 
   const handleSearchSubmit = (e) => {
@@ -67,33 +76,6 @@ export default function MunicipalCitizenPortal() {
       icon: Droplets,
       color: "bg-cyan-50 text-cyan-600 border-cyan-200",
       catKey: "water_supply",
-    },
-  ];
-
-  const notices = [
-    {
-      title: "Garbage Collection Schedule",
-      desc: "Updated schedule for Ward 12. Morning rounds from 7:00 AM.",
-      date: "Oct 22, 2026",
-      badge: "Notice",
-      badgeType: "notice",
-      icon: Trash2,
-    },
-    {
-      title: "Pothole Repair Drive",
-      desc: "Major road repair work in Central Zone covering arterial links.",
-      date: "Oct 19, 2026",
-      badge: "Infrastructure",
-      badgeType: "infrastructure",
-      icon: Wrench,
-    },
-    {
-      title: "Water Supply Interruption",
-      desc: "Planned maintenance work on Oct 25 affecting northern sectors.",
-      date: "Oct 18, 2026",
-      badge: "Alert",
-      badgeType: "alert",
-      icon: AlertTriangle,
     },
   ];
 
@@ -181,7 +163,7 @@ export default function MunicipalCitizenPortal() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-900">City Highlights</h2>
-            <p className="text-xs text-slate-500">Live, database-backed municipal performance metrics</p>
+            <p className="text-xs text-slate-500">Aggregate request figures from the CivicOne service database</p>
           </div>
           <Link
             to="/app/complaints"
@@ -191,32 +173,23 @@ export default function MunicipalCitizenPortal() {
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-          <StatCard
-            title="Issues Resolved This Month"
-            value={stats.issues_resolved?.toLocaleString()}
-            icon={CheckCircle}
-            color="green"
-          />
-          <StatCard
-            title="In Progress"
-            value={stats.in_progress?.toLocaleString()}
-            icon={Clock}
-            color="amber"
-          />
-          <StatCard
-            title="Resolution Rate"
-            value={stats.resolution_rate}
-            icon={ShieldCheck}
-            color="blue"
-          />
-          <StatCard
-            title="Avg. Resolution Time"
-            value={stats.avg_resolution_time}
-            icon={Timer}
-            color="purple"
-          />
-        </div>
+        {statsError ? (
+          <p role="status" className="card p-5 text-sm text-rose-700">
+            Service statistics could not be loaded. Please try again later.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+            <StatCard title="Total Requests" value={stats?.total_complaints ?? "—"} icon={ClipboardList} color="blue" />
+            <StatCard title="Resolved" value={stats?.issues_resolved ?? "—"} icon={CheckCircle} color="green" />
+            <StatCard title="In Progress" value={stats?.in_progress ?? "—"} icon={Clock} color="amber" />
+            <StatCard
+              title="Resolution Rate"
+              value={stats?.resolution_rate == null ? "—" : `${stats.resolution_rate}%`}
+              icon={ShieldCheck}
+              color="blue"
+            />
+          </div>
+        )}
       </section>
 
       {/* Recent Notices List matching screenshot */}
@@ -227,27 +200,36 @@ export default function MunicipalCitizenPortal() {
             <p className="text-xs text-slate-500">Official ward and public infrastructure circulars</p>
           </div>
           <Link
-            to="/app/notices?domain=municipal"
+            to="/notices?domain=municipal"
             className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
           >
             View All
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {notices.map((n) => (
+        {noticesLoading ? (
+          <div className="card p-6 text-sm text-slate-500">Loading published notices...</div>
+        ) : noticesError ? (
+          <p role="status" className="card p-6 text-sm text-rose-700">
+            Municipal notices could not be loaded. Please try again later.
+          </p>
+        ) : notices.length === 0 ? (
+          <div className="card p-6 text-sm text-slate-500">There are no published municipal notices at this time.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {notices.map((notice) => (
             <NoticeCard
-              key={n.title}
-              title={n.title}
-              description={n.desc}
-              date={n.date}
-              badgeText={n.badge}
-              badgeType={n.badgeType}
-              icon={n.icon}
-              onClick={() => navigate("/app/notices?domain=municipal")}
+              key={notice.id}
+              title={notice.title}
+              description={notice.description || "Open this notice for more information."}
+              date={notice.created_at ? new Date(notice.created_at).toLocaleDateString() : ""}
+              badgeText={notice.category?.replaceAll("_", " ") || "Announcement"}
+              badgeType={notice.category}
+              onClick={() => navigate("/notices?domain=municipal")}
             />
           ))}
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );

@@ -11,7 +11,7 @@
 
 The platform provides two dedicated, role-isolated portals:
 1. **Citizen Portal**: Public-facing civic services, manual address-based complaint submission (strictly no GPS or live location tracking), live complaint tracking timelines, public circulars, healthcare clinic directories, appointment booking, and cross-service consent management.
-2. **Government Portal**: Dedicated operational dashboard for department staff and administrators, featuring department queue management, complaint status life-cycle state machines, private internal staff notes, a 4-stage document publishing workflow (Draft → Review → Approved → Published), staff account provisioning, and database-backed analytics.
+2. **Government Portal**: Department-scoped operations for complaint assignment and resolution, SLA deadlines and overdue escalation, private notes and protected evidence, role-managed staff, scheduled and targeted public announcements, audit history, and database-backed workload and resolution analytics.
 
 ---
 
@@ -224,9 +224,11 @@ The application cleanly separates public citizens from authorized government per
 ### 2. Government Staff Portal (`/government/login`)
 - **Staff Access**: Authorized personnel log in using their assigned administrative or staff email address.
 - **Department Roles**:
-  - **Staff**: Manage incoming department complaints, update status flags, and post internal investigation notes.
-  - **Department Admin**: Oversee departmental queues, review and approve official notices, and manage departmental workflows.
-  - **Platform Admin**: Configure organizations, create departments, provision staff memberships, and inspect security audit logs.
+  - **Staff Member**: Handle assigned complaints, provide progress updates, add private notes, and upload resolution evidence.
+  - **Manager / Supervisor**: Monitor department queues, assign complaints, review notices, and receive overdue escalations.
+  - **Department Admin**: Manage department memberships, SLAs, assignments, and reports.
+  - **Public Information Officer**: Draft and publish approved public information for authorized departments.
+  - **Platform Admin**: Configure organizations and departments, manage system-wide access, and inspect platform audit logs.
 
 ---
 
@@ -240,17 +242,16 @@ The application cleanly separates public citizens from authorized government per
 5. Upon submission, an automated reference code (e.g., `#T-2024-0001`) is generated and the complaint is routed to the corresponding department.
 
 ### Complaint Life-Cycle & State Machine
-Complaints follow a strict status progression:
-- `submitted` → `triaged` → `in_progress` → `resolved` / `rejected`
-- Citizens can reopen resolved complaints if the issue recurs or remains unsatisfied.
-- Staff can record private internal notes that remain strictly invisible to the citizen.
+Complaint status changes are recorded with actor and time in the activity history. The workflow supports `submitted`, `classified`, `assigned`, `acknowledged`, `in_progress`, `on_hold`, `resolved`, `closed`, `reopened`, and `rejected`. Staff can record private internal notes; citizens receive notifications for visible assignment, status, and information-request updates. Department category SLAs set resolution deadlines, and high-priority complaints require evidence and resolution remarks before resolution.
 
 ### 4-Stage Document Publishing
 Government circulars and citizen notices advance through an audit-backed approval workflow:
 1. **Draft**: Authored by department staff.
 2. **Review**: Submitted to departmental leadership for verification.
 3. **Approved**: Formally authorized by a department or platform administrator.
-4. **Published**: Rendered publicly on the Citizen Portal and public service pages.
+4. **Published**: Rendered on the Citizen Portal at the scheduled publication time and removed after expiry.
+
+Reviewers can request changes (returning a notice to its author) or reject it; authors receive in-app notifications and can revise and resubmit drafts. Announcements can target a service domain, a department, or all citizens, and may include protected attachments. Department dashboards report actual complaint totals, overdue cases, staff workload, resolution times, activity, and announcement states.
 
 ---
 

@@ -90,7 +90,7 @@ export default function CitizenDashboard() {
             Citizen Dashboard
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Welcome, {user?.full_name || "Ananya Sharma"}
+            Welcome{user?.full_name ? `, ${user.full_name}` : ""}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
             Track your civic complaints and access unified public services through one secure digital identity.

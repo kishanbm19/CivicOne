@@ -186,12 +186,12 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
     ).all()
 
     departments_data = []
-    primary_domain = "transport"
+    primary_domain = None
 
     for m in ms:
         dept = m.department
         org = dept.organization
-        if org:
+        if org and primary_domain is None:
             primary_domain = org.domain
         departments_data.append({
             "id": dept.id,
@@ -216,7 +216,8 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
                 "organization_name": d.organization.name if d.organization else None,
                 "organization_domain": d.organization.domain if d.organization else None
             })
-        primary_domain = "municipal"
+            if primary_domain is None and d.organization:
+                primary_domain = d.organization.domain
 
     return {
         "id": u.id,
@@ -226,9 +227,22 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
         "primary_domain": primary_domain,
         "departments": departments_data,
         "permissions": {
-            "can_assign": u.role in ("dept_admin", "platform_admin", "staff"),
-            "can_publish_documents": u.role in ("dept_admin", "platform_admin"),
-            "can_manage_staff": u.role in ("dept_admin", "platform_admin"),
+            "can_assign": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
+                for d in departments_data
+            ),
+            "can_publish_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "public_information_officer", "information_officer")
+                for d in departments_data
+            ),
+            "can_approve_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
+                for d in departments_data
+            ),
+            "can_manage_staff": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin")
+                for d in departments_data
+            ),
             "can_manage_orgs": u.role == "platform_admin",
             "can_view_audit": u.role in ("dept_admin", "platform_admin")
         }

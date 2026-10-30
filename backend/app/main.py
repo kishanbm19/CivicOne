@@ -1,10 +1,16 @@
 import os
+import asyncio
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from .core.config import settings
 from .core.database import Base, engine
 from .routers import auth, complaints, documents, consent, notifications, services, analytics, admin
+from .services.operations import run_operations_maintenance
+
+logger = logging.getLogger("civicone.operations")
+_operations_task: asyncio.Task | None = None
 
 app = FastAPI(
     title="CivicOne API",
@@ -16,8 +22,12 @@ app = FastAPI(
 
 # CORS setup
 origins = [origin.strip() for origin in settings.FRONTEND_ORIGINS.split(",") if origin.strip()]
-if "*" not in origins and "http://localhost:5173" not in origins:
-    origins.append("http://localhost:5173")
+if "*" not in origins:
+    origins = list(dict.fromkeys([
+        *origins,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]))
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,8 +54,30 @@ app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
 
 @app.on_event("startup")
 def _create_tables_dev():
+    global _operations_task
     if settings.APP_ENV == "development":
         Base.metadata.create_all(engine)
+    if _operations_task is None or _operations_task.done():
+        _operations_task = asyncio.create_task(_operations_worker())
+
+async def _operations_worker():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await asyncio.to_thread(run_operations_maintenance)
+        except Exception:
+            logger.exception("Government operations maintenance failed")
+
+@app.on_event("shutdown")
+async def _stop_operations_worker():
+    global _operations_task
+    if _operations_task and not _operations_task.done():
+        _operations_task.cancel()
+        try:
+            await _operations_task
+        except asyncio.CancelledError:
+            pass
+    _operations_task = None
 
 @app.get("/health")
 def health():
