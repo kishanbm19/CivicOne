@@ -34,11 +34,15 @@ import GovAnalytics from "../pages/GovAnalytics";
 import GovStaffManagement from "../pages/GovStaffManagement";
 import GovOrganizations from "../pages/GovOrganizations";
 import GovAuditLogs from "../pages/GovAuditLogs";
-import { Unauthorized, NotFound } from "../pages/Misc";
+import { NotFound } from "../pages/Misc";
 
-function Guard({ gov = false, children }) {
+const CITIZEN_ROLES = ["citizen"];
+const GOVERNMENT_ROLES = ["staff", "dept_admin", "platform_admin"];
+const OPERATIONAL_ROLES = ["staff", "dept_admin"];
+const ADMIN_ROLES = ["dept_admin", "platform_admin"];
+
+function Guard({ roles, children, government = false }) {
   const { user, loading } = useAuth();
-
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
@@ -48,18 +52,26 @@ function Guard({ gov = false, children }) {
   }
 
   if (!user) {
-    return <Navigate to={gov ? "/government/login" : "/login"} replace />;
+    return <Navigate to={government ? "/government/login" : "/login"} replace />;
   }
 
-  const isStaff = user.role !== "citizen";
-  if (gov && !isStaff) {
-    return <Unauthorized />;
-  }
-  if (!gov && isStaff) {
-    // If staff accesses citizen routes, allow or route to government
+  if (!roles.includes(user.role)) {
+    const destination = user.role === "platform_admin"
+      ? "/government/analytics"
+      : user.role === "staff" || user.role === "dept_admin"
+        ? "/government"
+        : user.role === "citizen"
+          ? "/app"
+          : "/login";
+    return <Navigate to={destination} replace />;
   }
 
   return children;
+}
+
+function GovernmentIndex() {
+  const { user } = useAuth();
+  return <Navigate to={user?.role === "platform_admin" ? "/government/analytics" : "/government/dashboard"} replace />;
 }
 
 export default function AppRoutes() {
@@ -85,7 +97,7 @@ export default function AppRoutes() {
       <Route
         path="/app"
         element={
-          <Guard>
+          <Guard roles={CITIZEN_ROLES}>
             <CitizenLayout />
           </Guard>
         }
@@ -106,24 +118,21 @@ export default function AppRoutes() {
       <Route
         path="/government"
         element={
-          <Guard gov>
+          <Guard roles={GOVERNMENT_ROLES} government>
             <GovernmentLayout />
           </Guard>
         }
       >
-        <Route index element={<GovDashboard />} />
-        <Route path="complaints" element={<GovComplaints />} />
-        <Route path="complaints/new" element={<NewComplaint />} />
-        <Route path="complaints/:id" element={<ComplaintDetail />} />
-        <Route path="documents" element={<GovDocuments />} />
-        <Route path="analytics" element={<GovAnalytics />} />
-        <Route path="staff" element={<GovStaffManagement />} />
-        <Route path="admin/organizations" element={<GovOrganizations />} />
-        <Route path="audit-logs" element={<GovAuditLogs />} />
+        <Route index element={<GovernmentIndex />} />
+        <Route path="dashboard" element={<Guard roles={OPERATIONAL_ROLES}><GovDashboard /></Guard>} />
+        <Route path="complaints" element={<Guard roles={OPERATIONAL_ROLES}><GovComplaints /></Guard>} />
+        <Route path="complaints/:id" element={<Guard roles={OPERATIONAL_ROLES}><ComplaintDetail /></Guard>} />
+        <Route path="documents" element={<Guard roles={OPERATIONAL_ROLES}><GovDocuments /></Guard>} />
+        <Route path="analytics" element={<Guard roles={GOVERNMENT_ROLES}><GovAnalytics /></Guard>} />
+        <Route path="staff" element={<Guard roles={ADMIN_ROLES}><GovStaffManagement /></Guard>} />
+        <Route path="admin/organizations" element={<Guard roles={["platform_admin"]}><GovOrganizations /></Guard>} />
+        <Route path="audit-logs" element={<Guard roles={ADMIN_ROLES}><GovAuditLogs /></Guard>} />
         <Route path="settings" element={<ProfileSettings />} />
-        <Route path="services/transport" element={<TransportCitizenPortal />} />
-        <Route path="services/municipal" element={<MunicipalCitizenPortal />} />
-        <Route path="services/healthcare" element={<HealthcareCitizenPortal />} />
       </Route>
 
       {/* Fallback 404 */}

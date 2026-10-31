@@ -49,8 +49,10 @@ export const markAllNotificationsRead = async () => {
 };
 
 // Analytics
-export const getPublicStats = async () => {
-  const res = await api.get("/analytics/public");
+export const getPublicStats = async (domain) => {
+  const res = await api.get("/analytics/public", {
+    params: domain ? { domain } : {},
+  });
   return res.data;
 };
 
@@ -92,7 +94,22 @@ export const provisionStaff = async (data) => {
   return res.data;
 };
 
+export const updateStaffMembership = async (id, data) => {
+  const res = await api.put(`/admin/staff/${id}`, data);
+  return res.data;
+};
+
 export const getAuditLogs = async (limit = 50) => {
   const res = await api.get("/admin/audit-logs", { params: { limit } });
+  return res.data;
+};
+
+export const listDepartmentSLAs = async () => {
+  const res = await api.get("/admin/slas");
+  return res.data;
+};
+
+export const saveDepartmentSLA = async (data) => {
+  const res = await api.put("/admin/slas", data);
   return res.data;
 };

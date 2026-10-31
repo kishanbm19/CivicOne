@@ -1,13 +1,27 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
 from ..core.database import get_db
-from ..core.dependencies import dept_admin_user, platform_admin_user
+from ..core.dependencies import (
+    authorized_department_ids,
+    can_manage_department,
+    platform_admin_user,
+    staff_user,
+)
 from ..core.security import hash_password
 from ..core.logging import log_audit_event
-from ..models import User, Organization, Department, DepartmentMembership, AuditEvent
+from ..models import (
+    User,
+    Organization,
+    Department,
+    DepartmentMembership,
+    AuditEvent,
+    DepartmentSLA,
+    Complaint,
+    Document,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -30,11 +44,31 @@ class StaffProvision(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     role: str = Field(pattern="^(staff|dept_admin)$")
     department_id: str
-    role_in_dept: str = "staff"
+    role_in_dept: str = Field(
+        default="staff",
+        pattern="^(staff|department_admin|supervisor|public_information_officer)$",
+    )
+
+class DepartmentSLAIn(BaseModel):
+    department_id: str
+    category: str = Field(min_length=2, max_length=50)
+    resolution_hours: int = Field(ge=1, le=8760)
+
+class StaffMembershipUpdate(BaseModel):
+    role_in_dept: str = Field(
+        pattern="^(staff|department_admin|supervisor|public_information_officer)$"
+    )
+    is_active: bool
 
 @router.get("/organizations")
-def list_organizations(db: Session = Depends(get_db)):
-    orgs = db.scalars(select(Organization).order_by(Organization.name)).all()
+def list_organizations(user: User = Depends(staff_user), db: Session = Depends(get_db)):
+    q = select(Organization)
+    if user.role != "platform_admin":
+        dept_ids = authorized_department_ids(db, user)
+        q = q.where(Organization.id.in_(
+            select(Department.organization_id).where(Department.id.in_(dept_ids or {"none"}))
+        ))
+    orgs = db.scalars(q.order_by(Organization.name)).all()
     return [
         {
             "id": o.id,
@@ -75,8 +109,11 @@ def create_organization(
     return {"id": org.id, "name": org.name, "domain": org.domain}
 
 @router.get("/departments")
-def list_departments(db: Session = Depends(get_db)):
-    depts = db.scalars(select(Department).order_by(Department.name)).all()
+def list_departments(user: User = Depends(staff_user), db: Session = Depends(get_db)):
+    q = select(Department)
+    if user.role != "platform_admin":
+        q = q.where(Department.id.in_(authorized_department_ids(db, user) or {"none"}))
+    depts = db.scalars(q.order_by(Department.name)).all()
     return [
         {
             "id": d.id,
@@ -120,8 +157,23 @@ def create_department(
     return {"id": dept.id, "name": dept.name, "category_key": dept.category_key}
 
 @router.get("/staff")
-def list_staff(user: User = Depends(dept_admin_user), db: Session = Depends(get_db)):
-    members = db.scalars(select(DepartmentMembership).where(DepartmentMembership.is_active.is_(True))).all()
+def list_staff(user: User = Depends(staff_user), db: Session = Depends(get_db)):
+    dept_ids = authorized_department_ids(db, user)
+    if user.role != "platform_admin":
+        dept_ids = {
+            dept_id for dept_id in dept_ids
+            if can_manage_department(db, user, dept_id)
+        }
+    if not dept_ids and user.role != "platform_admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Department administrator privileges required")
+    members = db.scalars(
+        select(DepartmentMembership)
+        .where(
+            DepartmentMembership.department_id.in_(dept_ids) if user.role != "platform_admin" else True
+        )
+        .join(User, User.id == DepartmentMembership.user_id)
+        .where(User.role.in_(("staff", "dept_admin")))
+    ).all()
     return [
         {
             "membership_id": m.id,
@@ -130,6 +182,8 @@ def list_staff(user: User = Depends(dept_admin_user), db: Session = Depends(get_
             "email": m.user.email,
             "role": m.user.role,
             "role_in_dept": m.role_in_dept,
+            "is_active": m.is_active,
+            "user_is_active": m.user.is_active,
             "department_id": m.department_id,
             "department_name": m.department.name if m.department else None,
             "domain": m.department.organization.domain if m.department and m.department.organization else None
@@ -141,12 +195,14 @@ def list_staff(user: User = Depends(dept_admin_user), db: Session = Depends(get_
 @router.post("/staff", status_code=201)
 def provision_staff_account(
     body: StaffProvision,
-    user: User = Depends(dept_admin_user),
+    user: User = Depends(staff_user),
     db: Session = Depends(get_db)
 ):
     dept = db.get(Department, body.department_id)
     if not dept:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Department not found")
+    if not can_manage_department(db, user, dept.id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot manage staff in this department")
 
     existing_u = db.scalar(select(User).where(User.email == body.email.lower()))
     if existing_u:
@@ -177,6 +233,9 @@ def provision_staff_account(
             is_active=True
         )
         db.add(m)
+    else:
+        existing_m.role_in_dept = body.role_in_dept
+        existing_m.is_active = True
 
     db.commit()
 
@@ -192,16 +251,162 @@ def provision_staff_account(
 
     return {"message": "Staff account provisioned successfully", "user_id": u.id, "email": u.email}
 
+@router.put("/staff/{membership_id}")
+def update_staff_membership(
+    membership_id: str,
+    body: StaffMembershipUpdate,
+    user: User = Depends(staff_user),
+    db: Session = Depends(get_db),
+):
+    membership = db.get(DepartmentMembership, membership_id)
+    if not membership:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staff membership not found")
+    if not can_manage_department(db, user, membership.department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot manage this department's staff")
+
+    elevated_roles = {"department_admin", "admin"}
+    if membership.is_active and membership.role_in_dept in elevated_roles and (
+        not body.is_active or body.role_in_dept not in elevated_roles
+    ):
+        active_admins = db.scalar(
+            select(func.count(DepartmentMembership.id)).where(
+                DepartmentMembership.department_id == membership.department_id,
+                DepartmentMembership.is_active.is_(True),
+                DepartmentMembership.role_in_dept.in_(elevated_roles),
+                DepartmentMembership.id != membership.id,
+            )
+        ) or 0
+        if active_admins == 0:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "A department must retain at least one active department administrator",
+            )
+
+    membership.role_in_dept = body.role_in_dept
+    membership.is_active = body.is_active
+    db.commit()
+    log_audit_event(
+        db,
+        action="STAFF_MEMBERSHIP_UPDATED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="department_membership",
+        resource_id=membership.id,
+        details=f"Updated {membership.user.email} in {membership.department.name}",
+    )
+    return {
+        "membership_id": membership.id,
+        "role_in_dept": membership.role_in_dept,
+        "is_active": membership.is_active,
+    }
+
+@router.get("/slas")
+def list_department_slas(user: User = Depends(staff_user), db: Session = Depends(get_db)):
+    q = select(DepartmentSLA)
+    if user.role != "platform_admin":
+        dept_ids = authorized_department_ids(db, user)
+        q = q.where(DepartmentSLA.department_id.in_(dept_ids or {"none"}))
+    rows = db.scalars(q.order_by(DepartmentSLA.department_id, DepartmentSLA.category)).all()
+    return [
+        {
+            "id": row.id,
+            "department_id": row.department_id,
+            "department_name": row.department.name if row.department else None,
+            "category": row.category,
+            "resolution_hours": row.resolution_hours,
+        }
+        for row in rows
+    ]
+
+@router.put("/slas")
+def upsert_department_sla(
+    body: DepartmentSLAIn,
+    user: User = Depends(staff_user),
+    db: Session = Depends(get_db),
+):
+    department = db.get(Department, body.department_id)
+    if not department:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Department not found")
+    if not can_manage_department(db, user, department.id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot manage this department's SLAs")
+
+    category = body.category.strip().lower()
+    row = db.scalar(
+        select(DepartmentSLA).where(
+            DepartmentSLA.department_id == department.id,
+            DepartmentSLA.category == category,
+        )
+    )
+    if row:
+        row.resolution_hours = body.resolution_hours
+    else:
+        row = DepartmentSLA(
+            department_id=department.id,
+            category=category,
+            resolution_hours=body.resolution_hours,
+        )
+        db.add(row)
+    open_complaints = db.scalars(
+        select(Complaint).where(
+            Complaint.department_id == department.id,
+            Complaint.category == category,
+            Complaint.status.notin_(("resolved", "closed", "rejected")),
+        )
+    ).all()
+    for complaint in open_complaints:
+        complaint.resolution_due_at = complaint.created_at + timedelta(hours=body.resolution_hours)
+    db.commit()
+    log_audit_event(
+        db,
+        action="DEPARTMENT_SLA_UPDATED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="department_sla",
+        resource_id=row.id,
+        details=f"{category}: {body.resolution_hours} hours in {department.name}",
+    )
+    return {
+        "id": row.id,
+        "department_id": row.department_id,
+        "department_name": department.name,
+        "category": row.category,
+        "resolution_hours": row.resolution_hours,
+    }
+
 @router.get("/audit-logs")
 def get_audit_logs(
     limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(dept_admin_user),
+    user: User = Depends(staff_user),
     db: Session = Depends(get_db)
 ):
+    query = select(AuditEvent)
+    if user.role != "platform_admin":
+        dept_ids = {
+            dept_id for dept_id in authorized_department_ids(db, user)
+            if can_manage_department(db, user, dept_id)
+        }
+        if not dept_ids:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Department audit access required")
+        complaint_ids = db.scalars(
+            select(Complaint.id).where(Complaint.department_id.in_(dept_ids))
+        ).all()
+        document_ids = db.scalars(
+            select(Document.id).where(Document.department_id.in_(dept_ids))
+        ).all()
+        staff_ids = db.scalars(
+            select(DepartmentMembership.user_id).where(
+                DepartmentMembership.department_id.in_(dept_ids),
+                DepartmentMembership.is_active.is_(True),
+            )
+        ).all()
+        query = query.where(or_(
+            (AuditEvent.resource_type == "department") & AuditEvent.resource_id.in_(dept_ids),
+            (AuditEvent.resource_type == "complaint") & AuditEvent.resource_id.in_(complaint_ids or {"none"}),
+            (AuditEvent.resource_type == "document") & AuditEvent.resource_id.in_(document_ids or {"none"}),
+            AuditEvent.actor_id.in_(staff_ids or {"none"}),
+        ))
     logs = db.scalars(
-        select(AuditEvent)
-        .order_by(AuditEvent.created_at.desc())
-        .limit(limit)
+        query.order_by(AuditEvent.created_at.desc()).limit(limit)
     ).all()
 
     return [

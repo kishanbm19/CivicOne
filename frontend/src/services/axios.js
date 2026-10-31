@@ -59,6 +59,9 @@ export const errMsg = (err) => {
       return err.response.data.detail.map((d) => d.msg || d).join(", ");
     }
   }
+  if (!err?.response && (err?.code === "ERR_NETWORK" || err?.message === "Network Error")) {
+    return "Cannot reach the CivicOne API. Check that the backend is running and VITE_API_BASE_URL points to it. If the frontend uses a different address, add that origin to the backend FRONTEND_ORIGINS setting.";
+  }
   return err?.message || "An unexpected error occurred. Please try again.";
 };
 

@@ -31,8 +31,7 @@ export default function NewComplaint() {
   const [address, setAddress] = useState("");
   const [locality, setLocality] = useState("");
   const [imageFile, setImageFile] = useState(null);
-  const [imageUrl, setImageUrl] = useState("");
-  const [uploadingImage, setUploadingImage] = useState(false);
+  const [attachmentError, setAttachmentError] = useState(null);
 
   // Submission state
   const [error, setError] = useState(null);
@@ -72,17 +71,9 @@ export default function NewComplaint() {
   const handleImageChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError(null);
+    setAttachmentError(null);
     setImageFile(file);
-    setUploadingImage(true);
-    try {
-      const res = await uploadComplaintImage(file);
-      setImageUrl(res.image_url);
-    } catch (err) {
-      console.warn("Local upload error, fallback to mock url:", err);
-      setImageUrl(URL.createObjectURL(file));
-    } finally {
-      setUploadingImage(false);
-    }
   };
 
   const validateStep1 = () => {
@@ -123,8 +114,15 @@ export default function NewComplaint() {
         category,
         address,
         locality: locality || undefined,
-        image_url: imageUrl || undefined,
       });
+      if (imageFile) {
+        try {
+          await uploadComplaintImage(res.id, imageFile);
+        } catch (err) {
+          console.error("Complaint photo upload failed:", err);
+          setAttachmentError(`The complaint was submitted, but its photo could not be attached: ${errMsg(err)}`);
+        }
+      }
       setSuccessResult(res);
     } catch (err) {
       setError(errMsg(err));
@@ -167,6 +165,10 @@ export default function NewComplaint() {
               <p>Assigned Department: <span className="font-semibold">{successResult.department_name}</span></p>
             )}
           </div>
+
+          {attachmentError && (
+            <p role="status" className="text-xs text-amber-700">{attachmentError}</p>
+          )}
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
             <button
@@ -234,7 +236,6 @@ export default function NewComplaint() {
           <span>{error}</span>
         </div>
       )}
-
       {/* Step 1: Details */}
       {step === 1 && (
         <div className="card p-6 sm:p-8 border border-slate-200 space-y-6">
@@ -391,12 +392,11 @@ export default function NewComplaint() {
               </p>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/webp,image/gif"
                 onChange={handleImageChange}
                 className="mt-3 block mx-auto text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
               />
-              {uploadingImage && <p className="text-xs text-blue-600 mt-2">Uploading photograph...</p>}
-              {imageUrl && <p className="text-xs text-emerald-600 font-semibold mt-2">✓ Photo attached</p>}
+              {imageFile && <p className="text-xs text-emerald-600 font-semibold mt-2">✓ {imageFile.name} selected</p>}
             </div>
           </div>
 
@@ -425,9 +425,9 @@ export default function NewComplaint() {
           <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 flex items-start gap-3">
             <Sparkles size={20} className="text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-bold text-blue-900">AI-Powered Routing Active</p>
+            <p className="text-xs font-bold text-blue-900">Complaint classification and routing</p>
               <p className="text-xs text-blue-800 mt-0.5 leading-relaxed">
-                Upon submission, your complaint will be structured using OpenAI and verified with deterministic dispatch rules.
+              CivicOne will classify your report and route it to a matching department where possible. Uncertain or unassigned cases are sent for staff review. If the optional AI service is unavailable, rule-based classification is used.
               </p>
             </div>
           </div>
@@ -454,7 +454,7 @@ export default function NewComplaint() {
               <span className="text-slate-500 font-medium block mb-1">Description:</span>
               <p className="text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">{description}</p>
             </div>
-            {imageUrl && (
+            {imageFile && (
               <div className="py-3 flex justify-between items-center">
                 <span className="text-slate-500 font-medium">Attached Image:</span>
                 <span className="text-emerald-600 font-semibold">1 Photograph Attached</span>

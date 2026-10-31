@@ -15,19 +15,45 @@ import {
   Legend,
   ResponsiveContainer
 } from "recharts";
-import { BarChart3, TrendingUp, Clock, CheckCircle2, ShieldAlert } from "lucide-react";
+import { BarChart3, TrendingUp, Clock, CheckCircle2, ShieldAlert, Inbox, Timer } from "lucide-react";
 import StatCard from "../components/dashboard/StatCard";
-import { getDepartmentAnalytics, getPlatformAnalytics } from "../services/services";
+import {
+  getDepartmentAnalytics,
+  getPlatformAnalytics,
+  listDepartmentSLAs,
+  listDepartments,
+  saveDepartmentSLA,
+} from "../services/services";
 import { useAuth } from "../context/AuthContext";
+import { errMsg } from "../services/axios";
 
 export default function GovAnalytics() {
-  const { user } = useAuth();
+  const { user, staffProfile } = useAuth();
   const outletCtx = useOutletContext() || {};
   const activeDomain = outletCtx.domain || "transport";
+  const currentDepartment = outletCtx.currentDepartment;
 
   const [analytics, setAnalytics] = useState(null);
   const [platformMetrics, setPlatformMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [departments, setDepartments] = useState([]);
+  const [slaRows, setSlaRows] = useState([]);
+  const [slaDepartment, setSlaDepartment] = useState(currentDepartment?.id || "");
+  const [slaCategory, setSlaCategory] = useState("");
+  const [slaHours, setSlaHours] = useState(72);
+  const [slaError, setSlaError] = useState("");
+  const [slaSaved, setSlaSaved] = useState(false);
+
+  const loadSlaData = () => {
+    Promise.all([listDepartments(), listDepartmentSLAs()])
+      .then(([deptData, slaData]) => {
+        setDepartments(deptData || []);
+        setSlaRows(slaData || []);
+        if (!slaDepartment && currentDepartment?.id) setSlaDepartment(currentDepartment.id);
+        if (!slaDepartment && deptData?.length) setSlaDepartment(deptData[0].id);
+      })
+      .catch((err) => setSlaError(errMsg(err)));
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -44,20 +70,31 @@ export default function GovAnalytics() {
       .finally(() => setLoading(false));
   }, [activeDomain, user?.role]);
 
-  const trendsData = analytics?.trends || [
-    { name: "Jan", count: 12, resolved: 10 },
-    { name: "Feb", count: 18, resolved: 15 },
-    { name: "Mar", count: 14, resolved: 12 },
-    { name: "Apr", count: 25, resolved: 22 },
-    { name: "May", count: 22, resolved: 20 },
-    { name: "Jun", count: 30, resolved: 27 },
-  ];
+  useEffect(() => {
+    loadSlaData();
+  }, [currentDepartment?.id]);
 
-  const categoryData = analytics?.category_distribution || [
-    { name: "Primary Service", value: 45, color: "#2563EB" },
-    { name: "Infrastructure", value: 30, color: "#10B981" },
-    { name: "Facility Maintenance", value: 25, color: "#F59E0B" },
-  ];
+  const trendsData = analytics?.trends || [];
+  const categoryData = analytics?.category_distribution || [];
+
+  const handleSaveSla = async (e) => {
+    e.preventDefault();
+    setSlaError("");
+    setSlaSaved(false);
+    try {
+      await saveDepartmentSLA({
+        department_id: slaDepartment,
+        category: slaCategory,
+        resolution_hours: Number(slaHours),
+      });
+      setSlaSaved(true);
+      setSlaCategory("");
+      loadSlaData();
+      getDepartmentAnalytics(activeDomain).then(setAnalytics);
+    } catch (err) {
+      setSlaError(errMsg(err));
+    }
+  };
 
   return (
     <div className="space-y-8">
@@ -73,28 +110,46 @@ export default function GovAnalytics() {
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
-          title="Assigned to Department"
-          value={analytics?.assigned_to_me || 24}
+          title="Total Complaints"
+          value={analytics?.total ?? 0}
           icon={BarChart3}
           color="blue"
         />
         <StatCard
+          title="Pending"
+          value={analytics?.pending ?? 0}
+          icon={Inbox}
+          color="amber"
+        />
+        <StatCard
           title="In Progress"
-          value={analytics?.in_progress || 18}
+          value={analytics?.in_progress ?? 0}
           icon={Clock}
           color="amber"
         />
         <StatCard
           title="Resolved"
-          value={analytics?.resolved || 42}
+          value={analytics?.resolved ?? 0}
           icon={CheckCircle2}
           color="green"
         />
         <StatCard
+          title="Assigned to Me"
+          value={analytics?.assigned_to_me ?? 0}
+          icon={TrendingUp}
+          color="blue"
+        />
+        <StatCard
           title="Overdue"
-          value={analytics?.overdue || 3}
+          value={analytics?.overdue ?? 0}
           icon={ShieldAlert}
           color="red"
+        />
+        <StatCard
+          title="Avg. Resolution (hrs)"
+          value={analytics?.avg_resolution_hours ?? "—"}
+          icon={Timer}
+          color="green"
         />
       </div>
 
@@ -199,6 +254,109 @@ export default function GovAnalytics() {
             ))}
           </div>
         </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 lg:col-span-12 gap-6">
+          <section className="card p-6 border border-slate-200">
+            <h2 className="font-bold text-slate-900 mb-4">Staff Workload</h2>
+            {analytics?.staff_workload?.length ? (
+              <div className="space-y-3">
+                {analytics.staff_workload.map((staff) => (
+                  <div key={staff.user_id} className="flex items-center justify-between text-sm">
+                    <span className="text-slate-700">{staff.staff_name}</span>
+                    <span className="font-bold text-slate-900">{staff.open_complaints} open</span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-sm text-slate-500">No active assigned workload.</p>}
+          </section>
+
+          <section className="card p-6 border border-slate-200">
+            <h2 className="font-bold text-slate-900 mb-4">Announcement Statistics</h2>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <p>Drafts <strong className="float-right">{analytics?.announcement_stats?.draft ?? 0}</strong></p>
+              <p>Pending approval <strong className="float-right">{analytics?.announcement_stats?.pending_approval ?? 0}</strong></p>
+              <p>Published <strong className="float-right">{analytics?.announcement_stats?.published ?? 0}</strong></p>
+              <p>Archived <strong className="float-right">{analytics?.announcement_stats?.archived ?? 0}</strong></p>
+            </div>
+          </section>
+
+          <section className="card p-6 border border-slate-200 lg:col-span-2">
+            <h2 className="font-bold text-slate-900 mb-4">Recent Department Activities</h2>
+            {analytics?.recent_activities?.length ? (
+              <div className="divide-y divide-slate-100">
+                {analytics.recent_activities.map((activity, index) => (
+                  <div key={`${activity.complaint_id}-${index}`} className="py-3 flex flex-wrap justify-between gap-2 text-sm">
+                    <span className="text-slate-700">{activity.summary}</span>
+                     <span className="text-xs text-slate-500">
+                      {activity.actor_name} · {new Date(activity.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-sm text-slate-500">No recent complaint activity.</p>}
+          </section>
+        </div>
+
+        {staffProfile?.permissions?.can_manage_staff && (
+          <section className="card p-6 border border-slate-200 space-y-4 lg:col-span-12">
+            <div>
+              <h2 className="font-bold text-slate-900">Service-Level Agreement Deadlines</h2>
+              <p className="text-xs text-slate-500 mt-1">Set a resolution target for each department complaint category.</p>
+            </div>
+            <form onSubmit={handleSaveSla} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <select
+                value={slaDepartment}
+                onChange={(e) => setSlaDepartment(e.target.value)}
+                className="input"
+                required
+              >
+                <option value="">Select department</option>
+                {departments.map((department) => (
+                  <option key={department.id} value={department.id}>{department.name}</option>
+                ))}
+              </select>
+              <input
+                value={slaCategory}
+                onChange={(e) => setSlaCategory(e.target.value)}
+                className="input"
+                placeholder="Category key"
+                required
+                minLength={2}
+              />
+              <input
+                type="number"
+                value={slaHours}
+                onChange={(e) => setSlaHours(e.target.value)}
+                className="input"
+                min="1"
+                max="8760"
+                required
+                aria-label="Resolution hours"
+              />
+              <button type="submit" className="btn">Save SLA</button>
+            </form>
+            {slaError && <p role="alert" className="text-sm text-rose-700">{slaError}</p>}
+            {slaSaved && <p className="text-sm text-emerald-700">SLA saved. New matching complaints receive the configured deadline.</p>}
+            {slaRows.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {slaRows.map((sla) => (
+                  <button
+                    type="button"
+                    key={sla.id}
+                    onClick={() => {
+                      setSlaDepartment(sla.department_id);
+                      setSlaCategory(sla.category);
+                      setSlaHours(sla.resolution_hours);
+                    }}
+                    className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-700"
+                  >
+                    {sla.department_name} · {sla.category} · {sla.resolution_hours}h
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );

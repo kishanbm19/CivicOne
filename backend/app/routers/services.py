@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..core.database import get_db
-from ..core.dependencies import current_user
+from ..core.dependencies import require_citizen
 from ..core.logging import log_audit_event
 from ..models import HealthcareFacility, AppointmentRequest, User
 
@@ -37,7 +37,7 @@ def get_healthcare_facilities(db: Session = Depends(get_db)):
     ]
 
 @router.get("/appointments")
-def list_user_appointments(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_user_appointments(user: User = Depends(require_citizen), db: Session = Depends(get_db)):
     appts = db.scalars(
         select(AppointmentRequest)
         .where(AppointmentRequest.user_id == user.id)
@@ -62,7 +62,7 @@ def list_user_appointments(user: User = Depends(current_user), db: Session = Dep
 @router.post("/appointments", status_code=201)
 def create_appointment(
     body: AppointmentCreate,
-    user: User = Depends(current_user),
+    user: User = Depends(require_citizen),
     db: Session = Depends(get_db)
 ):
     facility = db.get(HealthcareFacility, body.facility_id)

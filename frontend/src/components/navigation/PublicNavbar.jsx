@@ -12,10 +12,10 @@ export default function PublicNavbar() {
         {/* Links */}
         <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-600">
           <Link to="/" className="hover:text-blue-600 transition-colors">Home</Link>
-          <a href="#services" className="hover:text-blue-600 transition-colors">Services</a>
-          <a href="#about" className="hover:text-blue-600 transition-colors">About</a>
-          <a href="#how-it-works" className="hover:text-blue-600 transition-colors">How It Works</a>
-          <a href="#help" className="hover:text-blue-600 transition-colors">Help</a>
+          <Link to="/#services" className="hover:text-blue-600 transition-colors">Services</Link>
+          <Link to="/#how-it-works" className="hover:text-blue-600 transition-colors">About</Link>
+          <Link to="/#how-it-works" className="hover:text-blue-600 transition-colors">How It Works</Link>
+          <Link to="/help" className="hover:text-blue-600 transition-colors">Help</Link>
         </nav>
 
         {/* Auth Buttons */}

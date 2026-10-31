@@ -2,8 +2,9 @@ import hashlib
 import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..core.config import settings
@@ -34,10 +35,20 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: str = Field(min_length=5, max_length=255, pattern=EMAIL_REGEX)
     password: str
-    portal: str = "citizen"  # citizen | government
+    portal: Literal["citizen", "government"] = "citizen"
 
 class RefreshIn(BaseModel):
     refresh_token: str
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+class ProfileUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str | None = Field(default=None, min_length=2, max_length=150)
+    phone: str | None = Field(default=None, max_length=20)
 
 class PasswordResetRequestIn(BaseModel):
     email: str = Field(min_length=5, max_length=255, pattern=EMAIL_REGEX)
@@ -45,6 +56,16 @@ class PasswordResetRequestIn(BaseModel):
 class PasswordResetConfirmIn(BaseModel):
     token: str
     new_password: str = Field(min_length=8, max_length=128)
+
+def _issue_refresh_token(db: Session, user: User) -> str:
+    token = create_refresh_token(user.id)
+    db.add(RefreshSession(
+        user_id=user.id,
+        token_hash=hashlib.sha256(token.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    db.commit()
+    return token
 
 @router.post("/auth/register", status_code=201)
 def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
@@ -75,7 +96,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
     )
 
     access_token = create_access_token(u.id)
-    refresh_token = create_refresh_token(u.id)
+    refresh_token = _issue_refresh_token(db, u)
 
     return {
         "user": {"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role},
@@ -99,6 +120,8 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
 
     # Portal isolation enforcement
     is_staff_or_admin = u.role in ("staff", "dept_admin", "platform_admin")
+    if u.role not in ("citizen", "staff", "dept_admin", "platform_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account role is not authorized for portal access")
     if body.portal == "government" and not is_staff_or_admin:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -111,7 +134,7 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         )
 
     access_token = create_access_token(u.id)
-    refresh_token = create_refresh_token(u.id)
+    refresh_token = _issue_refresh_token(db, u)
 
     log_audit_event(
         db,
@@ -146,8 +169,27 @@ def refresh(body: RefreshIn, db: Session = Depends(get_db)):
     if not u or not u.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User account is inactive or not found")
 
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    session = db.scalar(
+        select(RefreshSession).where(
+            RefreshSession.user_id == u.id,
+            RefreshSession.token_hash == token_hash,
+            RefreshSession.is_revoked.is_(False),
+            RefreshSession.expires_at > datetime.now(timezone.utc),
+        )
+    )
+    if not session:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or revoked refresh token")
+
+    session.is_revoked = True
     new_access_token = create_access_token(u.id)
     new_refresh_token = create_refresh_token(u.id)
+    db.add(RefreshSession(
+        user_id=u.id,
+        token_hash=hashlib.sha256(new_refresh_token.encode()).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+    ))
+    db.commit()
     return {
         "access_token": new_access_token,
         "refresh_token": new_refresh_token,
@@ -156,6 +198,15 @@ def refresh(body: RefreshIn, db: Session = Depends(get_db)):
 
 @router.post("/auth/logout")
 def logout(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    sessions = db.scalars(
+        select(RefreshSession).where(
+            RefreshSession.user_id == user.id,
+            RefreshSession.is_revoked.is_(False),
+        )
+    ).all()
+    for session in sessions:
+        session.is_revoked = True
+    db.commit()
     log_audit_event(
         db,
         action="LOGOUT",
@@ -176,6 +227,61 @@ def me(u: User = Depends(current_user)):
         "created_at": u.created_at
     }
 
+@router.patch("/auth/profile")
+def update_profile(
+    body: ProfileUpdateIn,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Provide at least one profile field to update")
+    if "full_name" in changes and changes["full_name"] is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Full name cannot be null")
+    for field, value in changes.items():
+        setattr(user, field, value.strip() if isinstance(value, str) else value)
+    db.commit()
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "phone": user.phone,
+        "created_at": user.created_at,
+    }
+
+@router.post("/auth/password/change")
+def change_password(
+    body: PasswordChangeIn,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Current password is incorrect")
+    if verify_password(body.new_password, user.password_hash):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "New password must differ from the current password")
+
+    user.password_hash = hash_password(body.new_password)
+    sessions = db.scalars(
+        select(RefreshSession).where(
+            RefreshSession.user_id == user.id,
+            RefreshSession.is_revoked.is_(False),
+        )
+    ).all()
+    for session in sessions:
+        session.is_revoked = True
+    db.commit()
+    log_audit_event(
+        db,
+        action="PASSWORD_CHANGED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="user",
+        resource_id=user.id,
+        details=f"Password changed; {len(sessions)} refresh session(s) revoked",
+    )
+    return {"message": "Password updated successfully. Please sign in again."}
+
 @router.get("/staff/me")
 def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
     ms = db.scalars(
@@ -186,12 +292,12 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
     ).all()
 
     departments_data = []
-    primary_domain = "transport"
+    primary_domain = None
 
     for m in ms:
         dept = m.department
         org = dept.organization
-        if org:
+        if org and primary_domain is None:
             primary_domain = org.domain
         departments_data.append({
             "id": dept.id,
@@ -216,7 +322,8 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
                 "organization_name": d.organization.name if d.organization else None,
                 "organization_domain": d.organization.domain if d.organization else None
             })
-        primary_domain = "municipal"
+            if primary_domain is None and d.organization:
+                primary_domain = d.organization.domain
 
     return {
         "id": u.id,
@@ -226,9 +333,22 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
         "primary_domain": primary_domain,
         "departments": departments_data,
         "permissions": {
-            "can_assign": u.role in ("dept_admin", "platform_admin", "staff"),
-            "can_publish_documents": u.role in ("dept_admin", "platform_admin"),
-            "can_manage_staff": u.role in ("dept_admin", "platform_admin"),
+            "can_assign": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
+                for d in departments_data
+            ),
+            "can_publish_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "public_information_officer", "information_officer")
+                for d in departments_data
+            ),
+            "can_approve_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
+                for d in departments_data
+            ),
+            "can_manage_staff": u.role == "platform_admin" or u.role == "dept_admin" or any(
+                d["role_in_dept"] in ("department_admin", "admin")
+                for d in departments_data
+            ),
             "can_manage_orgs": u.role == "platform_admin",
             "can_view_audit": u.role in ("dept_admin", "platform_admin")
         }

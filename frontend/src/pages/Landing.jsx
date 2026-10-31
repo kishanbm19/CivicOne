@@ -5,34 +5,35 @@ import {
   Building2,
   HeartPulse,
   ArrowRight,
-  ShieldCheck,
   CheckCircle,
-  Clock,
   Sparkles,
-  FileText,
-  Search,
   Lock,
   ChevronRight,
-  HelpCircle
 } from "lucide-react";
-import Logo from "../components/common/Logo";
 import { getPublicStats, listPublicDocuments } from "../services";
 import { TransportHeroIllustration } from "../components/common/HeroIllustrations";
 
 export default function Landing() {
-  const [stats, setStats] = useState({
-    issues_resolved: 1245,
-    in_progress: 320,
-    resolution_rate: "95%",
-    avg_resolution_time: "2.4 Days",
-  });
+  const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState(false);
   const [notices, setNotices] = useState([]);
+  const [noticesError, setNoticesError] = useState(false);
+  const [noticesLoading, setNoticesLoading] = useState(true);
 
   useEffect(() => {
-    getPublicStats().then(setStats).catch(() => {});
+    getPublicStats()
+      .then(setStats)
+      .catch((err) => {
+        console.error("Unable to load public service statistics:", err);
+        setStatsError(true);
+      });
     listPublicDocuments({ size: 3 })
       .then((data) => setNotices(data.items || []))
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Unable to load public notices:", err);
+        setNoticesError(true);
+      })
+      .finally(() => setNoticesLoading(false));
   }, []);
 
   const serviceDomains = [
@@ -69,49 +70,51 @@ export default function Landing() {
   ];
 
   return (
-    <div className="space-y-16 py-8">
+    <div className="space-y-16 py-8 sm:py-10">
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="rounded-3xl bg-gradient-to-br from-blue-50/80 via-white to-indigo-50/60 p-8 sm:p-14 border border-blue-100/90 shadow-elevated">
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-950 via-blue-950 to-blue-900 p-8 sm:p-14 border border-slate-800 shadow-elevated">
+          <div className="absolute -right-20 -top-24 h-80 w-80 rounded-full border border-white/10" />
+          <div className="absolute -right-8 -top-12 h-56 w-56 rounded-full border border-white/10" />
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
             <div className="lg:col-span-7 space-y-6">
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold tracking-wide uppercase shadow-subtle">
-                <Sparkles size={14} />
-                <span>Unified Civic Services Platform</span>
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 text-blue-100 text-xs font-bold tracking-wide uppercase border border-white/10">
+                <Sparkles size={14} aria-hidden="true" />
+                <span>Citizen services, connected</span>
               </div>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 tracking-tight leading-tight">
-                One Identity.<br />
-                <span className="text-blue-600">A Better, More Liveable City.</span>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-white tracking-tight leading-tight">
+                A clearer way to<br />
+                <span className="text-blue-300">get civic issues resolved.</span>
               </h1>
-              <p className="text-base sm:text-lg text-slate-600 leading-relaxed max-w-xl">
-                Access transport, municipal, and healthcare services through one secure account. Report issues, track requests, and stay informed with transparent civic governance.
+              <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-xl">
+                Report a service issue, follow its progress, and find public updates in one place. CivicOne connects residents with the teams responsible for local services.
               </p>
 
               {/* Actions */}
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 <Link to="/register" className="btn text-sm sm:text-base px-6 py-3">
-                  Get Started <ArrowRight size={16} />
+                  Access citizen services <ArrowRight size={16} />
                 </Link>
-                <a href="#services" className="btn-ghost text-sm sm:text-base px-6 py-3">
+                <a href="#services" className="inline-flex items-center justify-center rounded-xl border border-white/20 bg-white/5 px-6 py-3 text-sm sm:text-base font-semibold text-white hover:bg-white/10 transition-colors">
                   Explore Services
                 </a>
               </div>
 
               {/* Feature Highlights */}
-              <div className="pt-4 flex flex-wrap gap-6 text-xs font-medium text-slate-500 border-t border-slate-200/60">
+              <div className="pt-4 flex flex-wrap gap-x-6 gap-y-3 text-xs font-medium text-slate-300 border-t border-white/15">
                 <span className="flex items-center gap-1.5">
-                  <CheckCircle size={15} className="text-emerald-500" /> Address-based reporting (No GPS)
+                  <CheckCircle size={15} className="text-emerald-400" aria-hidden="true" /> Track submitted requests
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <CheckCircle size={15} className="text-emerald-500" /> AI-Assisted Routing & Fallbacks
+                  <CheckCircle size={15} className="text-emerald-400" aria-hidden="true" /> Read verified public updates
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <CheckCircle size={15} className="text-emerald-500" /> Role-Based Department Isolation
+                  <CheckCircle size={15} className="text-emerald-400" aria-hidden="true" /> Contact the right service team
                 </span>
               </div>
             </div>
 
-            <div className="lg:col-span-5 flex justify-center">
+            <div className="relative lg:col-span-5 flex justify-center rounded-2xl bg-white/95 p-3 shadow-2xl">
               <TransportHeroIllustration />
             </div>
           </div>
@@ -174,44 +177,130 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Database-Backed Public Highlights */}
+      {/* Published public notices */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Stay informed</p>
+            <h2 className="mt-1 text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+              Public notices
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Updates published by participating service departments.
+            </p>
+          </div>
+          <Link to="/notices" className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-800">
+            View all notices <ChevronRight size={16} />
+          </Link>
+        </div>
+        {noticesLoading ? (
+          <div className="card p-6 text-sm text-slate-500">Loading published notices...</div>
+        ) : noticesError ? (
+          <div role="status" className="card p-6 text-sm text-rose-700">
+            Public notices could not be loaded. Please try again later.
+          </div>
+        ) : notices.length === 0 ? (
+          <div className="card p-6 text-sm text-slate-500">There are no published notices at this time.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {notices.map((notice) => (
+              <Link key={notice.id} to="/notices" className="card card-hover p-5 block">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700">
+                    {(notice.service_domain || "Civic").replaceAll("_", " ")}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    {notice.created_at ? new Date(notice.created_at).toLocaleDateString() : ""}
+                  </span>
+                </div>
+                <h3 className="mt-3 font-bold text-slate-900">{notice.title}</h3>
+                <p className="mt-2 text-sm text-slate-600 line-clamp-3">
+                  {notice.description || "Open this notice for more information."}
+                </p>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Database-backed public metrics */}
       <section className="bg-slate-900 text-white py-14">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
           <div className="text-center max-w-xl mx-auto space-y-2">
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Live City Resolution Metrics
-            </h2>
-            <p className="text-slate-400 text-xs sm:text-sm">
-              Real-time aggregated performance across all civic departments.
+            <p className="text-xs font-bold uppercase tracking-wider text-blue-300">Service activity</p>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">Civic service overview</h2>
+            <p className="text-slate-400 text-sm">
+              Current aggregate request figures from the CivicOne service database.
             </p>
           </div>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="bg-slate-800/80 p-6 rounded-2xl border border-slate-700/80 text-center">
-              <p className="text-3xl sm:text-4xl font-black text-emerald-400">
-                {stats.issues_resolved?.toLocaleString()}
-              </p>
-              <p className="text-xs font-semibold text-slate-300 mt-2">Issues Resolved This Month</p>
+          {statsError ? (
+            <p role="status" className="text-center text-sm text-rose-300">
+              Service statistics could not be loaded. Please try again later.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+              {[
+                ["Total requests", stats?.total_complaints],
+                ["Resolved", stats?.issues_resolved],
+                ["In progress", stats?.in_progress],
+                ["Resolution rate", stats?.resolution_rate],
+              ].map(([label, value]) => (
+                <div key={label} className="bg-slate-800/80 p-5 sm:p-6 rounded-2xl border border-slate-700/80 text-center">
+                  <p className="text-2xl sm:text-3xl font-black text-white">
+                    {value == null ? (stats ? "—" : "…") : typeof value === "number" && label !== "Resolution rate" ? value.toLocaleString() : `${value}${label === "Resolution rate" ? "%" : ""}`}
+                  </p>
+                  <p className="text-xs font-semibold text-slate-300 mt-2">{label}</p>
+                </div>
+              ))}
             </div>
-            <div className="bg-slate-800/80 p-6 rounded-2xl border border-slate-700/80 text-center">
-              <p className="text-3xl sm:text-4xl font-black text-amber-400">
-                {stats.in_progress?.toLocaleString()}
-              </p>
-              <p className="text-xs font-semibold text-slate-300 mt-2">In Progress Under Review</p>
+          )}
+          {!statsError && stats && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-bold text-white">Requests by service area</h3>
+                <p className="mt-1 text-xs text-slate-400">
+                  Aggregated counts only; individual complaint details are private.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {serviceDomains.map((service) => {
+                  const domainStats = stats.requests_by_domain?.[service.domain] || {
+                    total: 0,
+                    resolved: 0,
+                    in_progress: 0,
+                    pending: 0,
+                    rejected: 0,
+                  };
+                  const Icon = service.icon;
+                  return (
+                    <div
+                      key={service.domain}
+                      className="rounded-2xl border border-slate-700 bg-slate-800/60 p-5"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10 text-blue-200">
+                          <Icon size={19} aria-hidden="true" />
+                        </span>
+                        <div>
+                          <h4 className="font-semibold text-white">{service.title}</h4>
+                          <p className="text-2xl font-black text-white">
+                            {domainStats.total.toLocaleString()}
+                            <span className="ml-2 text-xs font-medium text-slate-400">requests</span>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 border-t border-slate-700 pt-3 text-xs text-slate-300">
+                        <span>Resolved: {domainStats.resolved.toLocaleString()}</span>
+                        <span>In progress: {domainStats.in_progress.toLocaleString()}</span>
+                        <span>Pending: {domainStats.pending.toLocaleString()}</span>
+                        <span>Rejected: {domainStats.rejected.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="bg-slate-800/80 p-6 rounded-2xl border border-slate-700/80 text-center">
-              <p className="text-3xl sm:text-4xl font-black text-blue-400">
-                {stats.resolution_rate}
-              </p>
-              <p className="text-xs font-semibold text-slate-300 mt-2">Verified Resolution Rate</p>
-            </div>
-            <div className="bg-slate-800/80 p-6 rounded-2xl border border-slate-700/80 text-center">
-              <p className="text-3xl sm:text-4xl font-black text-purple-400">
-                {stats.avg_resolution_time}
-              </p>
-              <p className="text-xs font-semibold text-slate-300 mt-2">Average Resolution Time</p>
-            </div>
-          </div>
+          )}
         </div>
       </section>
 

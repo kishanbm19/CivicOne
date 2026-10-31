@@ -56,7 +56,6 @@ export default function CitizenDashboard() {
       icon: Bus,
       bg: "bg-blue-50/70 hover:bg-blue-100/70 border-blue-200 text-blue-900",
       btnClass: "bg-blue-600 hover:bg-blue-700 text-white",
-      link: "/services/transport",
       reportLink: "/app/complaints/new?domain=transport",
     },
     {
@@ -66,7 +65,6 @@ export default function CitizenDashboard() {
       icon: Building2,
       bg: "bg-emerald-50/70 hover:bg-emerald-100/70 border-emerald-200 text-emerald-900",
       btnClass: "bg-emerald-600 hover:bg-emerald-700 text-white",
-      link: "/services/municipal",
       reportLink: "/app/complaints/new?domain=municipal",
     },
     {
@@ -76,7 +74,6 @@ export default function CitizenDashboard() {
       icon: HeartPulse,
       bg: "bg-rose-50/70 hover:bg-rose-100/70 border-rose-200 text-rose-900",
       btnClass: "bg-rose-600 hover:bg-rose-700 text-white",
-      link: "/services/healthcare",
       reportLink: "/app/complaints/new?domain=healthcare",
     },
   ];
@@ -90,7 +87,7 @@ export default function CitizenDashboard() {
             Citizen Dashboard
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Welcome, {user?.full_name || "Ananya Sharma"}
+            Welcome{user?.full_name ? `, ${user.full_name}` : ""}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
             Track your civic complaints and access unified public services through one secure digital identity.
@@ -127,9 +124,9 @@ export default function CitizenDashboard() {
         />
       </div>
 
-      {/* Quick Service Gateways */}
+      {/* Complaint reporting shortcuts */}
       <div className="space-y-3">
-        <h2 className="text-lg font-bold text-slate-900">Access City Services</h2>
+        <h2 className="text-lg font-bold text-slate-900">Report an Issue by Service</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {serviceButtons.map((svc) => {
             const Icon = svc.icon;
@@ -150,16 +147,10 @@ export default function CitizenDashboard() {
                   </div>
                 </div>
 
-                <div className="mt-5 pt-4 border-t border-slate-200/60 flex items-center justify-between">
-                  <Link
-                    to={svc.link}
-                    className="text-xs font-bold text-slate-700 hover:text-slate-900 flex items-center gap-1"
-                  >
-                    Explore Portal <ChevronRight size={14} />
-                  </Link>
+                <div className="mt-5 pt-4 border-t border-slate-200/60">
                   <Link
                     to={svc.reportLink}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${svc.btnClass} shadow-sm`}
+                    className={`inline-flex items-center justify-center px-3 py-2 rounded-lg text-xs font-semibold ${svc.btnClass} shadow-sm`}
                   >
                     Report Issue
                   </Link>

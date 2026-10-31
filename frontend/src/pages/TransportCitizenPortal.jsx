@@ -1,12 +1,26 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bus, MapPin, Building, ShieldAlert, Search, ArrowRight, Calendar, AlertCircle } from "lucide-react";
+import { Bus, MapPin, Building, ShieldAlert, Search, ArrowRight } from "lucide-react";
 import { TransportHeroIllustration } from "../components/common/HeroIllustrations";
 import NoticeCard from "../components/dashboard/NoticeCard";
+import { listPublicDocuments } from "../services/documents";
 
 export default function TransportCitizenPortal() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
+  const [notices, setNotices] = useState([]);
+  const [noticesLoading, setNoticesLoading] = useState(true);
+  const [noticesError, setNoticesError] = useState(false);
+
+  useEffect(() => {
+    listPublicDocuments({ domain: "transport", size: 3 })
+      .then((data) => setNotices(data.items || []))
+      .catch((err) => {
+        console.error("Unable to load transport notices:", err);
+        setNoticesError(true);
+      })
+      .finally(() => setNoticesLoading(false));
+  }, []);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -41,33 +55,6 @@ export default function TransportCitizenPortal() {
       icon: ShieldAlert,
       color: "bg-rose-50 text-rose-600 border-rose-200",
       catKey: "general",
-    },
-  ];
-
-  const notices = [
-    {
-      title: "Route 45 Schedule Updated",
-      desc: "New timetable effective from Oct 25, 2026. Added peak hour buses.",
-      date: "Oct 22, 2026",
-      badge: "Announcement",
-      badgeType: "announcement",
-      image: "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?w=600&auto=format&fit=crop&q=80",
-    },
-    {
-      title: "New Bus Stop Shelter at Kuvempunagar",
-      desc: "Installation completed with covered seating and digital arrival boards.",
-      date: "Oct 20, 2026",
-      badge: "Infrastructure",
-      badgeType: "infrastructure",
-      image: "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?w=600&auto=format&fit=crop&q=80",
-    },
-    {
-      title: "Night Services Extended",
-      desc: "Extended services on key routes during festival season until 1 AM.",
-      date: "Oct 18, 2026",
-      badge: "Service Update",
-      badgeType: "service_update",
-      image: "https://images.unsplash.com/photo-1509749837427-ac94a2553d0e?w=600&auto=format&fit=crop&q=80",
     },
   ];
 
@@ -158,27 +145,36 @@ export default function TransportCitizenPortal() {
             <p className="text-xs text-slate-500">Official notices published by the Transport Department</p>
           </div>
           <Link
-            to="/app/notices?domain=transport"
+            to="/notices?domain=transport"
             className="text-xs font-semibold text-blue-600 hover:text-blue-700 hover:underline"
           >
             View All
           </Link>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {notices.map((n) => (
+        {noticesLoading ? (
+          <div className="card p-6 text-sm text-slate-500">Loading published notices...</div>
+        ) : noticesError ? (
+          <p role="status" className="card p-6 text-sm text-rose-700">
+            Transport notices could not be loaded. Please try again later.
+          </p>
+        ) : notices.length === 0 ? (
+          <div className="card p-6 text-sm text-slate-500">There are no published transport notices at this time.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {notices.map((notice) => (
             <NoticeCard
-              key={n.title}
-              title={n.title}
-              description={n.desc}
-              date={n.date}
-              badgeText={n.badge}
-              badgeType={n.badgeType}
-              image={n.image}
-              onClick={() => navigate("/app/notices?domain=transport")}
+              key={notice.id}
+              title={notice.title}
+              description={notice.description || "Open this notice for more information."}
+              date={notice.created_at ? new Date(notice.created_at).toLocaleDateString() : ""}
+              badgeText={notice.category?.replaceAll("_", " ") || "Announcement"}
+              badgeType={notice.category}
+              onClick={() => navigate("/notices?domain=transport")}
             />
           ))}
-        </div>
+          </div>
+        )}
       </section>
     </div>
   );
