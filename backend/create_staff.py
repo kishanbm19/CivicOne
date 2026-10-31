@@ -7,13 +7,48 @@ Usage:
   With arguments:
     python create_staff.py --email admin@civicone.gov --password MyPassword123 --name "Admin User" --role platform_admin
     python create_staff.py --email staff@transport.gov --password MyPassword123 --name "Transit Officer" --role staff --domain transport
+
+  Initial CivicOne accounts (passwords are prompted without echo):
+    python create_staff.py --provision-initial-accounts
 """
 import sys
 import argparse
+import getpass
 from sqlalchemy import select
 from app.core.database import SessionLocal, engine, Base
 from app.core.security import hash_password
 from app.models import User, Organization, Department, DepartmentMembership
+
+INITIAL_ACCOUNTS = (
+    {
+        "email": "rohan@transport.in",
+        "full_name": "Rohan",
+        "role": "staff",
+        "domain": "transport",
+        "category_key": "bus_delay",
+    },
+    {
+        "email": "kavya@municipal.in",
+        "full_name": "Kavya",
+        "role": "staff",
+        "domain": "municipal",
+        "category_key": "garbage",
+    },
+    {
+        "email": "arjun@healthcare.in",
+        "full_name": "Arjun",
+        "role": "staff",
+        "domain": "healthcare",
+        "category_key": "facility_cleanliness",
+    },
+    {
+        "email": "admin@civicone.in",
+        "full_name": "Main Admin",
+        "role": "platform_admin",
+        "domain": None,
+        "category_key": None,
+    },
+)
 
 DOMAINS = {
     "transport": {
@@ -32,6 +67,118 @@ DOMAINS = {
         "category_key": "facility_cleanliness"
     }
 }
+
+def provision_initial_accounts(passwords: dict[str, str], session_factory=SessionLocal):
+    """Provision the four initial accounts atomically without replacing existing credentials."""
+    results = []
+    with session_factory() as db:
+        with db.begin():
+            resolved_departments = {}
+            for account in INITIAL_ACCOUNTS:
+                if account["domain"] is None:
+                    continue
+                matches = db.scalars(
+                    select(Department)
+                    .join(Organization, Department.organization_id == Organization.id)
+                    .where(
+                        Organization.domain == account["domain"],
+                        Department.category_key == account["category_key"],
+                    )
+                ).all()
+                if len(matches) != 1:
+                    raise ValueError(
+                        f"Expected exactly one existing department for {account['domain']}"
+                    )
+                resolved_departments[account["email"]] = matches[0]
+
+            for account in INITIAL_ACCOUNTS:
+                email = account["email"]
+                user = db.scalar(select(User).where(User.email == email))
+                created = user is None
+                if user is None:
+                    password = passwords.get(email)
+                    if password is None:
+                        raise ValueError(f"A password is required to create {email}")
+                    if len(password) < 8:
+                        raise ValueError("Initial passwords must contain at least 8 characters")
+                    user = User(
+                        email=email,
+                        full_name=account["full_name"],
+                        role=account["role"],
+                        password_hash=hash_password(password),
+                        is_active=True,
+                    )
+                    db.add(user)
+                    db.flush()
+                elif user.role != account["role"] or not user.is_active:
+                    raise ValueError(
+                        f"Existing account {email} has a conflicting role or is inactive"
+                    )
+
+                department = resolved_departments.get(email)
+                if department is not None:
+                    memberships = db.scalars(
+                        select(DepartmentMembership).where(
+                            DepartmentMembership.user_id == user.id
+                        )
+                    ).all()
+                    target_membership = next(
+                        (m for m in memberships if m.department_id == department.id),
+                        None,
+                    )
+                    if target_membership is None:
+                        target_membership = DepartmentMembership(
+                            user_id=user.id,
+                            department_id=department.id,
+                            role_in_dept="staff",
+                            is_active=True,
+                        )
+                        db.add(target_membership)
+                    else:
+                        target_membership.role_in_dept = "staff"
+                        target_membership.is_active = True
+                    for membership in memberships:
+                        if membership.department_id != department.id:
+                            membership.is_active = False
+                else:
+                    existing_membership = db.scalar(
+                        select(DepartmentMembership.id).where(
+                            DepartmentMembership.user_id == user.id
+                        )
+                    )
+                    if existing_membership is not None:
+                        raise ValueError(
+                            "The platform administrator must not have department memberships"
+                        )
+
+                results.append(
+                    {
+                        "email": email,
+                        "role": user.role,
+                        "created": created,
+                        "department": department.name if department else None,
+                    }
+                )
+    return results
+
+def _prompt_initial_passwords():
+    passwords = {}
+    with SessionLocal() as db:
+        existing_emails = set(db.scalars(
+            select(User.email).where(
+                User.email.in_([account["email"] for account in INITIAL_ACCOUNTS])
+            )
+        ).all())
+    for account in INITIAL_ACCOUNTS:
+        if account["email"] in existing_emails:
+            continue
+        password = getpass.getpass(
+            f"Initial password for {account['email']} (input hidden): "
+        )
+        if len(password) < 8:
+            raise ValueError("Initial passwords must contain at least 8 characters")
+        passwords[account["email"]] = password
+    return passwords
 
 def ensure_department(db, domain_key: str):
     info = DOMAINS[domain_key]
@@ -128,6 +275,11 @@ def list_users():
 
 def main():
     parser = argparse.ArgumentParser(description="Create, list, or delete government staff or admin accounts in CivicOne.")
+    parser.add_argument(
+        "--provision-initial-accounts",
+        action="store_true",
+        help="Create the three initial staff accounts and platform administrator in one transaction",
+    )
     parser.add_argument("--email", help="Account email address")
     parser.add_argument("--password", help="Account password (min 8 characters)")
     parser.add_argument("--name", help="Full name of staff member / admin")
@@ -137,6 +289,20 @@ def main():
     parser.add_argument("--list", action="store_true", help="List all accounts in the database")
 
     args = parser.parse_args()
+
+    if args.provision_initial_accounts:
+        if args.list or args.delete or args.email or args.password or args.name:
+            parser.error("--provision-initial-accounts cannot be combined with other actions")
+        try:
+            results = provision_initial_accounts(_prompt_initial_passwords())
+        except ValueError as exc:
+            print(f"[!] Initial account provisioning failed: {exc}. No changes were committed.")
+            raise SystemExit(1) from None
+        for result in results:
+            state = "created" if result["created"] else "already existed"
+            department = f" | Department: {result['department']}" if result["department"] else ""
+            print(f"[✓] {result['email']} | Role: {result['role']}{department} | {state}")
+        return
 
     if args.list:
         list_users()
@@ -190,4 +356,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

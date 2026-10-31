@@ -255,7 +255,7 @@ export default function GovAnalytics() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 lg:col-span-12 gap-6">
           <section className="card p-6 border border-slate-200">
             <h2 className="font-bold text-slate-900 mb-4">Staff Workload</h2>
             {analytics?.staff_workload?.length ? (
@@ -298,7 +298,7 @@ export default function GovAnalytics() {
         </div>
 
         {staffProfile?.permissions?.can_manage_staff && (
-          <section className="card p-6 border border-slate-200 space-y-4">
+          <section className="card p-6 border border-slate-200 space-y-4 lg:col-span-12">
             <div>
               <h2 className="font-bold text-slate-900">Service-Level Agreement Deadlines</h2>
               <p className="text-xs text-slate-500 mt-1">Set a resolution target for each department complaint category.</p>

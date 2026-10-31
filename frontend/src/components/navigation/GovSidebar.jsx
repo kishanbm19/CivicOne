@@ -10,10 +10,6 @@ import {
   Settings,
   ShieldAlert,
   LogOut,
-  Bus,
-  Building2,
-  HeartPulse,
-  Activity,
   Layers
 } from "lucide-react";
 import Logo from "../common/Logo";
@@ -31,9 +27,6 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
       tagBg: "bg-blue-950/80 text-blue-300 border-blue-800/40",
       activeBg: "bg-blue-600/30 text-white font-semibold border-l-4 border-blue-500",
       hoverBg: "hover:bg-slate-800/50 hover:text-white",
-      serviceIcon: Bus,
-      serviceLabel: "Transport Services",
-      serviceLink: "/government/services/transport",
     },
     municipal: {
       bg: "bg-[#064e3b]",
@@ -41,9 +34,6 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
       tagBg: "bg-emerald-950/80 text-emerald-300 border-emerald-800/40",
       activeBg: "bg-emerald-600/30 text-white font-semibold border-l-4 border-emerald-400",
       hoverBg: "hover:bg-emerald-900/40 hover:text-white",
-      serviceIcon: Building2,
-      serviceLabel: "Civic Services",
-      serviceLink: "/government/services/municipal",
     },
     healthcare: {
       bg: "bg-[#450a0a]",
@@ -51,14 +41,11 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
       tagBg: "bg-rose-950/80 text-rose-300 border-rose-800/40",
       activeBg: "bg-rose-600/30 text-white font-semibold border-l-4 border-rose-400",
       hoverBg: "hover:bg-rose-900/40 hover:text-white",
-      serviceIcon: HeartPulse,
-      serviceLabel: "Facilities & Clinics",
-      serviceLink: "/government/services/healthcare",
     },
   };
 
   const currentTheme = THEMES[domain] || THEMES.transport;
-  const ServiceIcon = currentTheme.serviceIcon;
+  const isPlatformAdmin = user?.role === "platform_admin";
 
   return (
     <aside className={`w-64 min-h-screen ${currentTheme.bg} text-slate-300 flex flex-col justify-between select-none shadow-xl transition-colors duration-300`}>
@@ -77,7 +64,7 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
         <nav className="mt-5 space-y-1 text-sm font-medium">
           {/* Dashboard */}
           <Link
-            to="/government"
+            to={isPlatformAdmin ? "/government/analytics" : "/government"}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${
               location.pathname === "/government"
                 ? currentTheme.activeBg
@@ -85,11 +72,11 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
             }`}
           >
             <LayoutDashboard size={18} />
-            <span>Dashboard</span>
+            <span>{isPlatformAdmin ? "System Overview" : "Dashboard"}</span>
           </Link>
 
           {/* Complaints Group */}
-          <div className="pt-3">
+          {!isPlatformAdmin && <div className="pt-3">
             <p className="px-3 text-[11px] font-bold tracking-wider uppercase text-slate-400/80 mb-1">
               Complaints
             </p>
@@ -115,35 +102,26 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
               <CheckSquare size={16} />
               <span>All Complaints</span>
             </Link>
-          </div>
+          </div>}
 
           {/* Domain Services */}
           <div className="pt-3">
             <p className="px-3 text-[11px] font-bold tracking-wider uppercase text-slate-400/80 mb-1">
               Operations
             </p>
-            <Link
-              to={currentTheme.serviceLink}
-              className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs ${
-                location.pathname.startsWith("/government/services")
-                  ? currentTheme.activeBg
-                  : `text-slate-300 ${currentTheme.hoverBg}`
-              }`}
-            >
-              <ServiceIcon size={16} />
-              <span>{currentTheme.serviceLabel}</span>
-            </Link>
-            <Link
-              to="/government/documents"
-              className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs ${
-                location.pathname.startsWith("/government/documents")
-                  ? currentTheme.activeBg
-                  : `text-slate-300 ${currentTheme.hoverBg}`
-              }`}
-            >
-              <FileText size={16} />
-              <span>Notices & Updates</span>
-            </Link>
+            {!isPlatformAdmin && (
+              <Link
+                to="/government/documents"
+                className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs ${
+                  location.pathname.startsWith("/government/documents")
+                    ? currentTheme.activeBg
+                    : `text-slate-300 ${currentTheme.hoverBg}`
+                }`}
+              >
+                <FileText size={16} />
+                <span>Notices & Updates</span>
+              </Link>
+            )}
             <Link
               to="/government/analytics"
               className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs ${

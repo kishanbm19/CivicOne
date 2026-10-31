@@ -30,8 +30,8 @@ export default function NewComplaint() {
   // Step 2: Address (Strictly manual - no GPS/geolocation APIs)
   const [address, setAddress] = useState("");
   const [locality, setLocality] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageFile, setImageFile] = useState(null);
+  const [attachmentError, setAttachmentError] = useState(null);
 
   // Submission state
   const [error, setError] = useState(null);
@@ -72,17 +72,8 @@ export default function NewComplaint() {
     const file = e.target.files?.[0];
     if (!file) return;
     setError(null);
-    setImageUrl("");
-    setUploadingImage(true);
-    try {
-      const res = await uploadComplaintImage(file);
-      setImageUrl(res.image_url);
-    } catch (err) {
-      console.error("Complaint photo upload failed:", err);
-      setError(`Photo could not be uploaded: ${errMsg(err)} You can choose another photo or submit without one.`);
-    } finally {
-      setUploadingImage(false);
-    }
+    setAttachmentError(null);
+    setImageFile(file);
   };
 
   const validateStep1 = () => {
@@ -113,10 +104,6 @@ export default function NewComplaint() {
   };
 
   const handleSubmit = async () => {
-    if (uploadingImage) {
-      setError("Please wait for the photo upload to finish before submitting.");
-      return;
-    }
     setError(null);
     setSubmitting(true);
     try {
@@ -127,8 +114,15 @@ export default function NewComplaint() {
         category,
         address,
         locality: locality || undefined,
-        image_url: imageUrl || undefined,
       });
+      if (imageFile) {
+        try {
+          await uploadComplaintImage(res.id, imageFile);
+        } catch (err) {
+          console.error("Complaint photo upload failed:", err);
+          setAttachmentError(`The complaint was submitted, but its photo could not be attached: ${errMsg(err)}`);
+        }
+      }
       setSuccessResult(res);
     } catch (err) {
       setError(errMsg(err));
@@ -171,6 +165,10 @@ export default function NewComplaint() {
               <p>Assigned Department: <span className="font-semibold">{successResult.department_name}</span></p>
             )}
           </div>
+
+          {attachmentError && (
+            <p role="status" className="text-xs text-amber-700">{attachmentError}</p>
+          )}
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
             <button
@@ -238,7 +236,6 @@ export default function NewComplaint() {
           <span>{error}</span>
         </div>
       )}
-
       {/* Step 1: Details */}
       {step === 1 && (
         <div className="card p-6 sm:p-8 border border-slate-200 space-y-6">
@@ -399,11 +396,7 @@ export default function NewComplaint() {
                 onChange={handleImageChange}
                 className="mt-3 block mx-auto text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
               />
-              {uploadingImage && <p className="text-xs text-blue-600 mt-2">Uploading photograph...</p>}
-              {imageUrl && <p className="text-xs text-emerald-600 font-semibold mt-2">✓ Photo attached</p>}
-              {!imageUrl && !uploadingImage && error?.startsWith("Photo could not be uploaded:") && (
-                <p className="text-xs text-slate-600 mt-2">Photo is optional; you may continue without an attachment.</p>
-              )}
+              {imageFile && <p className="text-xs text-emerald-600 font-semibold mt-2">✓ {imageFile.name} selected</p>}
             </div>
           </div>
 
@@ -461,7 +454,7 @@ export default function NewComplaint() {
               <span className="text-slate-500 font-medium block mb-1">Description:</span>
               <p className="text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100">{description}</p>
             </div>
-            {imageUrl && (
+            {imageFile && (
               <div className="py-3 flex justify-between items-center">
                 <span className="text-slate-500 font-medium">Attached Image:</span>
                 <span className="text-emerald-600 font-semibold">1 Photograph Attached</span>
@@ -479,7 +472,7 @@ export default function NewComplaint() {
             </button>
             <button
               type="button"
-              disabled={submitting || uploadingImage}
+              disabled={submitting}
               onClick={handleSubmit}
               className="btn px-8 py-3 text-sm font-bold shadow-md flex items-center gap-2"
             >

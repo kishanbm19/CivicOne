@@ -171,6 +171,8 @@ def list_staff(user: User = Depends(staff_user), db: Session = Depends(get_db)):
         .where(
             DepartmentMembership.department_id.in_(dept_ids) if user.role != "platform_admin" else True
         )
+        .join(User, User.id == DepartmentMembership.user_id)
+        .where(User.role.in_(("staff", "dept_admin")))
     ).all()
     return [
         {

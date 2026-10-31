@@ -72,10 +72,13 @@ export function AuthProvider({ children }) {
   };
 
   const signOut = async () => {
-    await apiLogout();
-    setUser(null);
-    setStaffProfile(null);
-    setUnreadCount(0);
+    try {
+      await apiLogout();
+    } finally {
+      setUser(null);
+      setStaffProfile(null);
+      setUnreadCount(0);
+    }
   };
 
   return (

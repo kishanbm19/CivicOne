@@ -36,7 +36,6 @@ export default function CitizenNavbar({ activeDomain = null }) {
 
   const navLinks = [
     { label: "Home", to: "/app" },
-    { label: "Services", to: "/services/transport" },
     { label: "My Complaints", to: "/app/complaints" },
     { label: "Notices", to: "/app/notices" },
     { label: "Consent", to: "/app/consent" },
@@ -81,7 +80,7 @@ export default function CitizenNavbar({ activeDomain = null }) {
           {/* Navigation Links */}
           <nav className="hidden md:flex items-center gap-1">
             {navLinks.map((item) => {
-              const isActive = location.pathname === item.to || (item.label === "Services" && location.pathname.startsWith("/services"));
+              const isActive = location.pathname === item.to;
               return (
                 <Link
                   key={item.label}

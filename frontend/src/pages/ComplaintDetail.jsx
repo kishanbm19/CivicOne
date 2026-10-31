@@ -26,7 +26,9 @@ import {
   reopenComplaint,
   requestComplaintInformation,
   uploadComplaintEvidence,
-  listComplaintStaffOptions
+  listComplaintStaffOptions,
+  getComplaintImage,
+  downloadComplaintEvidence,
 } from "../services/complaints";
 import { listDepartments } from "../services/services";
 import { useAuth } from "../context/AuthContext";
@@ -59,6 +61,7 @@ export default function ComplaintDetail() {
   const [informationRequestText, setInformationRequestText] = useState("");
   const [evidenceFile, setEvidenceFile] = useState(null);
   const [evidenceCitizenVisible, setEvidenceCitizenVisible] = useState(true);
+  const [complaintImageSrc, setComplaintImageSrc] = useState(null);
 
   const loadDetail = () => {
     setLoading(true);
@@ -87,6 +90,38 @@ export default function ComplaintDetail() {
   useEffect(() => {
     loadDetail();
   }, [id]);
+
+  useEffect(() => {
+    let objectUrl;
+    if (!complaint?.image_url) {
+      setComplaintImageSrc(null);
+      return undefined;
+    }
+    getComplaintImage(id)
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setComplaintImageSrc(objectUrl);
+      })
+      .catch((err) => setError(errMsg(err)));
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [complaint?.image_url, id]);
+
+  const handleEvidenceDownload = async (evidence) => {
+    setError(null);
+    try {
+      const blob = await downloadComplaintEvidence(id, evidence.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = evidence.file_name;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(errMsg(err));
+    }
+  };
 
   const handleStatusChange = async (e) => {
     e.preventDefault();
@@ -337,14 +372,14 @@ export default function ComplaintDetail() {
         </div>
 
         {/* Attached Photo */}
-        {complaint.image_url && (
+        {complaint.image_url && complaintImageSrc && (
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
               Attached Photograph
             </h3>
             <div className="rounded-2xl overflow-hidden border border-slate-200 max-w-md">
               <img
-                src={complaint.image_url}
+                src={complaintImageSrc}
                 alt="Complaint attachment"
                 className="w-full h-auto max-h-64 object-cover"
                 onError={(e) => {
@@ -365,6 +400,10 @@ export default function ComplaintDetail() {
                 <li key={evidence.id}>
                   <a
                     href={evidence.download_url}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      handleEvidenceDownload(evidence);
+                    }}
                     className="text-sm font-semibold text-blue-700 hover:underline"
                   >
                     {evidence.file_name}

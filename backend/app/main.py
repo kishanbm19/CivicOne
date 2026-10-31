@@ -1,9 +1,7 @@
-import os
 import asyncio
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from .core.config import settings
 from .core.database import Base, engine
 from .routers import auth, complaints, documents, consent, notifications, services, analytics, admin
@@ -46,11 +44,6 @@ app.include_router(notifications.router)
 app.include_router(services.router)
 app.include_router(analytics.router)
 app.include_router(admin.router)
-
-# Mount local upload directory for synthetic image attachments and documents
-upload_dir = settings.UPLOAD_DIRECTORY
-os.makedirs(upload_dir, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=upload_dir), name="uploads")
 
 @app.on_event("startup")
 def _create_tables_dev():

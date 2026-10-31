@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..core.database import get_db
-from ..core.dependencies import current_user
+from ..core.dependencies import require_citizen
 from ..core.logging import log_audit_event
 from ..models import ConsentGrant, Organization, User
 
@@ -33,7 +33,7 @@ def _consent_out(c: ConsentGrant, db: Session):
     }
 
 @router.get("")
-def list_my_consent_grants(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_my_consent_grants(user: User = Depends(require_citizen), db: Session = Depends(get_db)):
     grants = db.scalars(
         select(ConsentGrant)
         .where(ConsentGrant.user_id == user.id)
@@ -44,7 +44,7 @@ def list_my_consent_grants(user: User = Depends(current_user), db: Session = Dep
 @router.post("", status_code=201)
 def create_consent_grant(
     body: ConsentGrantIn,
-    user: User = Depends(current_user),
+    user: User = Depends(require_citizen),
     db: Session = Depends(get_db)
 ):
     org = db.get(Organization, body.recipient_organization_id)
@@ -79,7 +79,7 @@ def create_consent_grant(
 @router.post("/{grant_id}/revoke")
 def revoke_consent_grant(
     grant_id: str,
-    user: User = Depends(current_user),
+    user: User = Depends(require_citizen),
     db: Session = Depends(get_db)
 ):
     grant = db.get(ConsentGrant, grant_id)

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import Session
 from ..core.database import get_db
-from ..core.dependencies import current_user, staff_user, authorized_department_ids, platform_admin_user
+from ..core.dependencies import require_citizen, staff_user, authorized_department_ids, platform_admin_user
 from ..models import (
     Complaint,
     ComplaintActivity,
@@ -67,7 +67,7 @@ def get_public_stats(domain: str | None = None, db: Session = Depends(get_db)):
     }
 
 @router.get("/citizen")
-def get_citizen_dashboard_analytics(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def get_citizen_dashboard_analytics(user: User = Depends(require_citizen), db: Session = Depends(get_db)):
     total = db.scalar(select(func.count(Complaint.id)).where(Complaint.citizen_id == user.id)) or 0
     in_progress = db.scalar(select(func.count(Complaint.id)).where(
         Complaint.citizen_id == user.id,
@@ -168,10 +168,12 @@ def get_department_analytics(domain: str | None = None, user: User = Depends(sta
         .group_by(User.id, User.full_name)
         .order_by(func.count(Complaint.id).desc())
     )
-    staff_workload = [
-        {"user_id": row.id, "staff_name": row.full_name, "open_complaints": row.amount}
-        for row in db.execute(workload_q).all()
-    ]
+    staff_workload = []
+    if user.role != "platform_admin":
+        staff_workload = [
+            {"user_id": row.id, "staff_name": row.full_name, "open_complaints": row.amount}
+            for row in db.execute(workload_q).all()
+        ]
 
     resolved_dates = db.execute(
         select(Complaint.created_at, StatusHistory.created_at)
@@ -187,24 +189,26 @@ def get_department_analytics(domain: str | None = None, user: User = Depends(sta
         resolution_hours.append((resolved_at - created_at).total_seconds() / 3600)
     avg_resolution_hours = round(sum(resolution_hours) / len(resolution_hours), 1) if resolution_hours else None
 
-    activity_q = (
-        select(ComplaintActivity, User.full_name)
-        .join(Complaint, Complaint.id == ComplaintActivity.complaint_id)
-        .join(User, User.id == ComplaintActivity.actor_id)
-        .where(*filters)
-        .order_by(ComplaintActivity.created_at.desc())
-        .limit(10)
-    )
-    recent_activities = [
-        {
-            "action": row.action,
-            "summary": row.summary,
-            "actor_name": actor_name,
-            "created_at": row.created_at,
-            "complaint_id": row.complaint_id,
-        }
-        for row, actor_name in db.execute(activity_q).all()
-    ]
+    recent_activities = []
+    if user.role != "platform_admin":
+        activity_q = (
+            select(ComplaintActivity, User.full_name)
+            .join(Complaint, Complaint.id == ComplaintActivity.complaint_id)
+            .join(User, User.id == ComplaintActivity.actor_id)
+            .where(*filters)
+            .order_by(ComplaintActivity.created_at.desc())
+            .limit(10)
+        )
+        recent_activities = [
+            {
+                "action": row.action,
+                "summary": row.summary,
+                "actor_name": actor_name,
+                "created_at": row.created_at,
+                "complaint_id": row.complaint_id,
+            }
+            for row, actor_name in db.execute(activity_q).all()
+        ]
 
     document_filters = []
     if user.role != "platform_admin":
@@ -234,7 +238,7 @@ def get_department_analytics(domain: str | None = None, user: User = Depends(sta
         "overdue": overdue,
         "trends": monthly_trends,
         "category_distribution": top_categories,
-        "staff_workload": staff_workload,
+        "staff_workload": staff_workload if user.role != "platform_admin" else [],
         "recent_activities": recent_activities,
         "announcement_stats": announcement_stats,
         "avg_resolution_hours": avg_resolution_hours,

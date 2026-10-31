@@ -5,14 +5,14 @@ import io
 import os
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
-from app.models import User, Department, Organization, DepartmentMembership, Document
+from app.models import User, Department, Organization, DepartmentMembership, Document, AuditEvent
 from app.core.config import settings
 
 TEST_DB_URL = "sqlite:///:memory:"
@@ -168,7 +168,26 @@ def test_private_document_authorized_for_author_and_dept_staff():
 
     admin_headers = auth_headers("u-admin")
     res_admin = client.get("/api/v1/documents/doc-dept-1", headers=admin_headers)
-    assert res_admin.status_code == 200
+    assert res_admin.status_code == 403
+    assert client.get("/api/v1/documents", headers=admin_headers).json() == []
+
+    exceptional = client.post(
+        "/api/v1/documents/doc-dept-1/admin-access",
+        headers=admin_headers,
+        json={"reason": "Investigating an approved security incident"},
+    )
+    assert exceptional.status_code == 200
+    assert exceptional.json()["id"] == "doc-dept-1"
+    with TestingSessionLocal() as db:
+        event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "SENSITIVE_DOCUMENT_ACCESSED",
+                AuditEvent.resource_id == "doc-dept-1",
+            )
+        )
+        assert event is not None
+        assert event.actor_id == "u-admin"
+        assert "approved security incident" in event.details
 
 
 def test_upload_valid_pdf_success():
@@ -214,16 +233,93 @@ def test_upload_rejects_mime_spoofing():
 
 def test_complaint_image_upload_magic_byte_validation():
     cit_headers = auth_headers("u-cit")
+    complaint = client.post(
+        "/api/v1/complaints",
+        headers=cit_headers,
+        json={
+            "domain": "transport",
+            "title": "Damaged bus shelter",
+            "description": "The shelter glass is broken and unsafe.",
+            "category": "bus_stop_damage",
+            "address": "Central station road",
+        },
+    )
+    assert complaint.status_code == 201
+    complaint_id = complaint.json()["id"]
 
     valid_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR..."
     files = {"file": ("pothole.png", io.BytesIO(valid_png), "image/png")}
-    res_ok = client.post("/api/v1/complaints/upload-image", headers=cit_headers, files=files)
+    res_ok = client.post(
+        f"/api/v1/complaints/{complaint_id}/image",
+        headers=cit_headers,
+        files=files,
+    )
     assert res_ok.status_code == 200
     assert "image_url" in res_ok.json()
+    image = client.get(f"/api/v1/complaints/{complaint_id}/image", headers=cit_headers)
+    assert image.status_code == 200
+    assert image.content == valid_png
+    assert client.get("/uploads/complaint_image.png").status_code == 404
 
     invalid_jpg = b"random binary string that is definitely not a jpeg"
     files_bad = {"file": ("pothole.jpg", io.BytesIO(invalid_jpg), "image/jpeg")}
-    res_bad = client.post("/api/v1/complaints/upload-image", headers=cit_headers, files=files_bad)
+    res_bad = client.post(
+        f"/api/v1/complaints/{complaint_id}/image",
+        headers=cit_headers,
+        files=files_bad,
+    )
     assert res_bad.status_code == 400
     assert "does not match extension" in res_bad.json()["detail"]
 
+
+def test_platform_admin_requires_audited_reason_for_complaint_image_access():
+    citizen_headers = auth_headers("u-cit")
+    complaint = client.post(
+        "/api/v1/complaints",
+        headers=citizen_headers,
+        json={
+            "domain": "transport",
+            "title": "Damaged bus shelter",
+            "description": "The shelter glass is broken and unsafe.",
+            "category": "bus_stop_damage",
+            "address": "Central station road",
+        },
+    )
+    complaint_id = complaint.json()["id"]
+    valid_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR..."
+    upload = client.post(
+        f"/api/v1/complaints/{complaint_id}/image",
+        headers=citizen_headers,
+        files={"file": ("shelter.png", io.BytesIO(valid_png), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    admin_headers = auth_headers("u-admin")
+    assert client.get(
+        f"/api/v1/complaints/{complaint_id}/image", headers=admin_headers
+    ).status_code == 404
+    denied = client.post(
+        f"/api/v1/complaints/{complaint_id}/admin-image",
+        headers=admin_headers,
+        json={"reason": " "},
+    )
+    assert denied.status_code == 422
+
+    response = client.post(
+        f"/api/v1/complaints/{complaint_id}/admin-image",
+        headers=admin_headers,
+        json={"reason": "Investigating a formally reported service safety incident"},
+    )
+    assert response.status_code == 200
+    assert response.content == valid_png
+    with TestingSessionLocal() as db:
+        event = db.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "SENSITIVE_COMPLAINT_ATTACHMENT_ACCESSED",
+                AuditEvent.resource_type == "complaint",
+                AuditEvent.resource_id == complaint_id,
+            )
+        )
+        assert event is not None
+        assert event.actor_id == "u-admin"
+        assert "Investigating a formally reported" in event.details

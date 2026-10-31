@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, Mail, AlertCircle, ArrowRight, Sparkles } from "lucide-react";
 import Logo from "../components/common/Logo";
 import { useAuth } from "../context/AuthContext";
@@ -9,6 +9,7 @@ export default function Login({ portal = "citizen" }) {
   const isGov = portal === "government";
   const { signIn } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
 
   const [email, setEmail] = useState("");
@@ -70,6 +71,11 @@ export default function Login({ portal = "citizen" }) {
         <div className={`p-8 rounded-3xl shadow-elevated border ${
           isGov ? "bg-slate-900 border-slate-800" : "bg-white border-slate-200"
         }`}>
+          {location.state?.message && (
+            <div role="status" className="mb-6 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+              {location.state.message}
+            </div>
+          )}
           {error && (
             <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-start gap-2.5">
               <AlertCircle size={16} className="shrink-0 mt-0.5" />

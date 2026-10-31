@@ -19,8 +19,13 @@ def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer), db
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User account is inactive or not found")
     return user
 
+def require_citizen(user: User = Depends(current_user)) -> User:
+    if user.role != "citizen":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Citizen account required")
+    return user
+
 def staff_user(user: User = Depends(current_user)) -> User:
-    if user.role == "citizen":
+    if user.role not in ("staff", "dept_admin", "platform_admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Government staff credentials required")
     return user
 
@@ -40,6 +45,10 @@ def authorized_department_ids(db: Session, user: User) -> set[str]:
         # Platform admin has access across all departments
         all_ids = db.scalars(select(Department.id)).all()
         return set(all_ids)
+    return active_department_membership_ids(db, user)
+
+def active_department_membership_ids(db: Session, user: User) -> set[str]:
+    """Returns department IDs explicitly granted by an active membership."""
     rows = db.scalars(
         select(DepartmentMembership.department_id).where(
             DepartmentMembership.user_id == user.id,

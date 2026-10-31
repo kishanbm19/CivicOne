@@ -11,7 +11,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
 from ..core.config import settings
@@ -19,7 +19,8 @@ from ..core.database import get_db
 from ..core.dependencies import (
     current_user,
     staff_user,
-    authorized_department_ids,
+    platform_admin_user,
+    active_department_membership_ids,
     can_manage_department,
     can_publish_for_department,
     bearer,
@@ -58,6 +59,26 @@ class DocumentUpdate(BaseModel):
 
 class ReviewFeedbackIn(BaseModel):
     message: str = Field(min_length=5, max_length=2000)
+
+class AdminDocumentAccessIn(BaseModel):
+    reason: str = Field(min_length=10, max_length=1000)
+    download: bool = False
+
+    @field_validator("reason")
+    @classmethod
+    def require_nonblank_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("A non-empty access reason is required")
+        return normalized
+
+
+def _document_department_ids(db: Session, user: User) -> set[str]:
+    return active_department_membership_ids(db, user)
+
+
+def _can_access_document_department(db: Session, user: User, department_id: str | None) -> bool:
+    return bool(department_id and department_id in _document_department_ids(db, user))
 
 
 def _get_optional_user(
@@ -132,8 +153,7 @@ def _check_document_access(doc: Document, user: User | None, db: Session) -> Non
     Enforces authorization check for viewing or downloading a document:
     - If document is public and published: anyone (including guests/citizens) can view/download.
     - If document is private (is_public=False) or not published (draft, review, approved, archived):
-      requires authenticated staff/admin with appropriate scope (platform_admin or an active
-      member of the document's department).
+      requires authenticated staff with an active membership in the document's department.
     """
     if doc.is_public and doc.status == "published":
         return
@@ -151,11 +171,14 @@ def _check_document_access(doc: Document, user: User | None, db: Session) -> Non
             detail="Access denied: citizens cannot view internal or unpublished documents.",
         )
 
-    if user.role == "platform_admin":
-        return
+    if user.role not in ("staff", "dept_admin", "platform_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: government staff credentials required.",
+        )
 
     # Department scoped check
-    auth_depts = authorized_department_ids(db, user)
+    auth_depts = _document_department_ids(db, user)
     if doc.department_id and doc.department_id in auth_depts:
         return
 
@@ -206,11 +229,8 @@ def list_staff_documents(
     db: Session = Depends(get_db),
 ):
     """Staff view documents within their authorized department/org scope."""
-    auth_depts = authorized_department_ids(db, user)
-    q = select(Document)
-
-    if user.role != "platform_admin":
-        q = q.where(Document.department_id.in_(auth_depts or {"none"}))
+    auth_depts = _document_department_ids(db, user)
+    q = select(Document).where(Document.department_id.in_(auth_depts or {"none"}))
 
     if domain:
         q = q.where(Document.service_domain == domain)
@@ -303,7 +323,7 @@ def create_document(
     user: User = Depends(staff_user),
     db: Session = Depends(get_db),
 ):
-    auth_depts = authorized_department_ids(db, user)
+    auth_depts = _document_department_ids(db, user)
     department_id = body.department_id
     if department_id is None:
         candidates = db.scalars(
@@ -327,7 +347,7 @@ def create_document(
                 status.HTTP_403_FORBIDDEN,
                 "You cannot create documents for this department or domain",
             )
-    elif user.role != "platform_admin":
+    else:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "A document must belong to one of your departments",
@@ -398,11 +418,10 @@ def update_document(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
     if doc.status not in ("draft", "changes_requested"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only draft documents can be edited")
-    if user.role != "platform_admin":
-        if not doc.department_id or doc.department_id not in authorized_department_ids(db, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot edit this document")
-        if doc.author_id != user.id and not can_manage_department(db, user, doc.department_id):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the author or a department administrator can edit this document")
+    if not _can_access_document_department(db, user, doc.department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot edit this document")
+    if doc.author_id != user.id and not can_manage_department(db, user, doc.department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the author or a department administrator can edit this document")
     changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Provide at least one field to update")
@@ -452,7 +471,7 @@ def upload_document_file(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid announcement audience")
     if service_domain not in {"transport", "municipal", "healthcare"}:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid service domain")
-    auth_depts = authorized_department_ids(db, user)
+    auth_depts = _document_department_ids(db, user)
     if department_id is None:
         department_id = db.scalar(
             select(Department.id)
@@ -464,9 +483,7 @@ def upload_document_file(
             .limit(1)
         )
     department = db.get(Department, department_id) if department_id else None
-    if user.role != "platform_admin" and (
-        not department or department.id not in auth_depts
-    ):
+    if not department or department.id not in auth_depts:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot create documents for this department")
     if department and (not department.organization or department.organization.domain != service_domain):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Department does not belong to the selected domain")
@@ -534,9 +551,8 @@ def submit_for_review(
             status.HTTP_400_BAD_REQUEST,
             "Only draft documents can be submitted for review",
         )
-    if user.role != "platform_admin":
-        if not doc.department_id or doc.department_id not in authorized_department_ids(db, user):
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot submit this document")
+    if not _can_access_document_department(db, user, doc.department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot submit this document")
 
     doc.status = "review"
     db.commit()
@@ -559,9 +575,8 @@ def approve_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not (
-        user.role == "platform_admin"
-        or (doc.department_id and can_manage_department(db, user, doc.department_id))
+    if not _can_access_document_department(db, user, doc.department_id) or not (
+        doc.department_id and can_manage_department(db, user, doc.department_id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized department supervisor can approve this document")
     if doc.status != "review":
@@ -591,9 +606,8 @@ def request_document_changes(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not (
-        user.role == "platform_admin"
-        or (doc.department_id and can_manage_department(db, user, doc.department_id))
+    if not _can_access_document_department(db, user, doc.department_id) or not (
+        doc.department_id and can_manage_department(db, user, doc.department_id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized supervisor can request changes")
     if doc.status != "review":
@@ -630,9 +644,8 @@ def reject_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not (
-        user.role == "platform_admin"
-        or (doc.department_id and can_manage_department(db, user, doc.department_id))
+    if not _can_access_document_department(db, user, doc.department_id) or not (
+        doc.department_id and can_manage_department(db, user, doc.department_id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized supervisor can reject documents")
     if doc.status != "review":
@@ -666,9 +679,8 @@ def publish_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not (
-        user.role == "platform_admin"
-        or (doc.department_id and can_publish_for_department(db, user, doc.department_id))
+    if not _can_access_document_department(db, user, doc.department_id) or not (
+        doc.department_id and can_publish_for_department(db, user, doc.department_id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot publish documents for this department")
     if doc.status != "approved":
@@ -697,9 +709,8 @@ def unpublish_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not (
-        user.role == "platform_admin"
-        or (doc.department_id and can_publish_for_department(db, user, doc.department_id))
+    if not _can_access_document_department(db, user, doc.department_id) or not (
+        doc.department_id and can_publish_for_department(db, user, doc.department_id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot archive documents for this department")
 
@@ -715,3 +726,50 @@ def unpublish_document(
         resource_id=doc.id,
     )
     return _doc_out(doc, db)
+
+
+@router.post("/{doc_id}/admin-access")
+def platform_admin_document_access(
+    doc_id: str,
+    body: AdminDocumentAccessIn,
+    user: User = Depends(platform_admin_user),
+    db: Session = Depends(get_db),
+):
+    doc = db.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    if doc.is_public and doc.status == "published":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Published public documents are available through the public document endpoint",
+        )
+
+    download_details: tuple[str, str] | None = None
+    if body.download:
+        if not doc.file_path:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No file attached to this document")
+
+        filename = os.path.basename(doc.file_path)
+        safe_path = get_canonical_storage_path(filename)
+        if not os.path.isfile(safe_path):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Document file not found")
+        download_details = (safe_path, filename)
+
+    log_audit_event(
+        db,
+        action="SENSITIVE_DOCUMENT_ACCESSED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="document",
+        resource_id=doc.id,
+        details=f"Platform administrator accessed a restricted document. Reason: {body.reason}",
+    )
+    if download_details is None:
+        return _doc_out(doc, db)
+
+    safe_path, filename = download_details
+    return FileResponse(
+        safe_path,
+        media_type=doc.mime_type or "application/octet-stream",
+        filename=f"{doc.title.replace(' ', '_')}{os.path.splitext(filename)[1]}",
+    )

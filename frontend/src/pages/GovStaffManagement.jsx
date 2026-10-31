@@ -16,7 +16,6 @@ export default function GovStaffManagement() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState("staff");
   const [deptId, setDeptId] = useState("");
   const [roleInDept, setRoleInDept] = useState("staff");
   const [submitting, setSubmitting] = useState(false);
@@ -69,7 +68,7 @@ export default function GovStaffManagement() {
         full_name: fullName,
         email,
         password,
-        role,
+        role: roleInDept === "department_admin" ? "dept_admin" : "staff",
         department_id: deptId,
         role_in_dept: roleInDept,
       });
@@ -78,7 +77,6 @@ export default function GovStaffManagement() {
       setFullName("");
       setEmail("");
       setPassword("");
-      setRole("staff");
       setRoleInDept("staff");
       loadData();
     } catch (err) {
@@ -259,18 +257,19 @@ export default function GovStaffManagement() {
               <div>
                 <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Initial Password</label>
                 <input
-                  type="text"
+                  type="password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
                   className="input"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Department</label>
-                  <select value={deptId} onChange={(e) => setDeptId(e.target.value)} className="input">
+                  <select value={deptId} onChange={(e) => setDeptId(e.target.value)} className="input" required>
                     {departments.map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name} ({d.domain})
@@ -279,22 +278,14 @@ export default function GovStaffManagement() {
                   </select>
                 </div>
                 <div>
-                  <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Role</label>
-                  <select value={role} onChange={(e) => setRole(e.target.value)} className="input">
-                    <option value="staff">Department Staff</option>
-                    <option value="dept_admin">Department Administrator</option>
+                  <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Department Role</label>
+                  <select value={roleInDept} onChange={(e) => setRoleInDept(e.target.value)} className="input" required>
+                    <option value="staff">Staff</option>
+                    <option value="supervisor">Manager / Supervisor</option>
+                    <option value="department_admin">Department Admin</option>
+                    <option value="public_information_officer">Public Information Officer</option>
                   </select>
                 </div>
-              </div>
-
-              <div>
-                <label className="font-bold uppercase tracking-wider text-slate-700 block mb-1">Department Role</label>
-                <select value={roleInDept} onChange={(e) => setRoleInDept(e.target.value)} className="input">
-                  <option value="staff">Staff</option>
-                  <option value="supervisor">Manager / Supervisor</option>
-                  <option value="department_admin">Department Admin</option>
-                  <option value="public_information_officer">Public Information Officer</option>
-                </select>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

@@ -52,16 +52,28 @@ export const uploadComplaintEvidence = async (id, file, citizenVisible = true) =
   return res.data;
 };
 
-export const reopenComplaint = async (id, reason) => {
-  const res = await api.post(`/complaints/${id}/reopen`, { reason });
+export const uploadComplaintImage = async (id, file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await api.post(`/complaints/${id}/image`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
   return res.data;
 };
 
-export const uploadComplaintImage = async (file) => {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await api.post("/complaints/upload-image", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
+export const getComplaintImage = async (id) => {
+  const res = await api.get(`/complaints/${id}/image`, { responseType: "blob" });
+  return res.data;
+};
+
+export const downloadComplaintEvidence = async (id, evidenceId) => {
+  const res = await api.get(`/complaints/${id}/evidence/${evidenceId}/download`, {
+    responseType: "blob",
   });
+  return res.data;
+};
+
+export const reopenComplaint = async (id, reason) => {
+  const res = await api.post(`/complaints/${id}/reopen`, { reason });
   return res.data;
 };

@@ -30,6 +30,16 @@ export const getStaffMe = async () => {
   return res.data;
 };
 
+export const updateProfile = async (data) => {
+  const res = await api.patch("/auth/profile", data);
+  return res.data;
+};
+
+export const changePassword = async (data) => {
+  const res = await api.post("/auth/password/change", data);
+  return res.data;
+};
+
 export const requestPasswordReset = async (email) => {
   const res = await api.post("/auth/password-reset/request", { email });
   return res.data;

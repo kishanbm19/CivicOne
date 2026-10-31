@@ -6,9 +6,21 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.main import app
 from app.core.database import Base, get_db
-from app.core.security import hash_password, create_access_token
+from app.core.security import hash_password, verify_password, create_access_token
 from app.services.operations import archive_expired_announcements
-from app.models import User, Organization, Department, DepartmentMembership, Complaint, StatusHistory, Document, ConsentGrant, Notification
+from app.models import (
+    User,
+    Organization,
+    Department,
+    DepartmentMembership,
+    Complaint,
+    StatusHistory,
+    Document,
+    ConsentGrant,
+    Notification,
+    AuditEvent,
+    RefreshSession,
+)
 
 # Shared StaticPool in-memory SQLite database
 test_engine = create_engine(
@@ -90,6 +102,16 @@ def test_vite_loopback_origins_are_allowed_for_api_requests():
 def auth_headers(user_id: str):
     token = create_access_token(user_id)
     return {"Authorization": f"Bearer {token}"}
+
+def grant_department_membership(user_id: str, department_id: str):
+    with TestingSessionLocal() as db:
+        db.add(DepartmentMembership(
+            user_id=user_id,
+            department_id=department_id,
+            role_in_dept="admin",
+            is_active=True,
+        ))
+        db.commit()
 
 def test_public_analytics_reports_empty_database_without_demo_values():
     response = client.get("/api/v1/analytics/public")
@@ -258,6 +280,7 @@ def test_document_publication_workflow():
     assert d_res.status_code == 201
     doc_id = d_res.json()["id"]
     assert d_res.json()["status"] == "draft"
+    grant_department_membership("adm-001", d_res.json()["department_id"])
 
     # Submit for review
     sub_res = client.post(f"/api/v1/documents/{doc_id}/submit-review", headers=headers_staff)
@@ -437,6 +460,7 @@ def test_scheduled_announcement_targets_citizens_and_expires():
     })
     assert draft.status_code == 201
     document_id = draft.json()["id"]
+    grant_department_membership("adm-001", draft.json()["department_id"])
 
     assert client.post(
         f"/api/v1/documents/{document_id}/submit-review",
@@ -485,6 +509,7 @@ def test_document_review_can_request_changes_and_reject():
     })
     assert draft.status_code == 201
     document_id = draft.json()["id"]
+    grant_department_membership("adm-001", draft.json()["department_id"])
     assert client.post(
         f"/api/v1/documents/{document_id}/submit-review",
         headers=staff_headers,
@@ -581,3 +606,207 @@ def test_resolution_remarks_and_high_priority_evidence_are_required():
         json={"new_status": "resolved", "reason": "Repair crew replaced the damaged panel."},
     )
     assert missing_evidence.status_code == 422
+
+def test_citizen_and_staff_only_api_boundaries():
+    citizen = auth_headers("cit-001")
+    staff = auth_headers("stf-001")
+
+    assert client.get("/api/v1/consent", headers=staff).status_code == 403
+    assert client.get("/api/v1/services/appointments", headers=staff).status_code == 403
+    assert client.get("/api/v1/analytics/citizen", headers=staff).status_code == 403
+    assert client.get("/api/v1/documents", headers=citizen).status_code == 403
+    assert client.get("/api/v1/complaints/staff-options", headers=citizen).status_code == 403
+    assert client.get("/api/v1/analytics/department", headers=citizen).status_code == 403
+    assert client.get("/api/v1/complaints").status_code == 401
+    assert client.get("/api/v1/services/facilities").status_code == 200
+    assert client.get("/api/v1/analytics/public").status_code == 200
+
+def test_staff_and_department_admin_are_scoped_to_active_memberships():
+    complaint = _create_transport_complaint()
+    with TestingSessionLocal() as db:
+        org = db.scalar(select(Organization))
+        other_department = Department(
+            id="dept-other",
+            organization_id=org.id,
+            name="Other Operations",
+            category_key="other",
+        )
+        department_admin = User(
+            id="dept-admin-1",
+            email="dept-admin@test.civicone.test",
+            full_name="Department Admin",
+            role="dept_admin",
+            password_hash=hash_password("Pass#1234"),
+        )
+        unrelated_complaint = Complaint(
+            id="complaint-other",
+            reference="OTHER-DEPT-1",
+            citizen_id="cit-001",
+            domain="transport",
+            title="Another department complaint",
+            description="A complaint assigned to another department.",
+            category="other",
+            address="Other department street",
+            department_id="dept-other",
+        )
+        db.add_all([other_department, department_admin, unrelated_complaint])
+        db.flush()
+        db.add(DepartmentMembership(
+            user_id=department_admin.id,
+            department_id=db.scalar(select(Department.id).where(Department.id != "dept-other")),
+            role_in_dept="staff",
+            is_active=True,
+        ))
+        db.commit()
+
+    staff_headers = auth_headers("stf-001")
+    assert client.get(
+        "/api/v1/complaints/complaint-other", headers=staff_headers
+    ).status_code == 404
+    staff_list = client.get("/api/v1/complaints", headers=staff_headers).json()
+    assert "complaint-other" not in {item["id"] for item in staff_list["items"]}
+
+    department_admin_headers = auth_headers("dept-admin-1")
+    assert client.get(
+        f"/api/v1/complaints/{complaint['id']}", headers=department_admin_headers
+    ).status_code == 200
+    assert client.get(
+        "/api/v1/complaints/complaint-other", headers=department_admin_headers
+    ).status_code == 404
+    department_admin_list = client.get(
+        "/api/v1/complaints", headers=department_admin_headers
+    ).json()
+    assert {item["id"] for item in department_admin_list["items"]} == {complaint["id"]}
+
+    no_membership_admin_id = "dept-admin-no-membership"
+    no_membership_admin = User(
+        id=no_membership_admin_id,
+        email="dept-admin-no-membership@test.civicone.test",
+        full_name="Unassigned Department Admin",
+        role="dept_admin",
+        password_hash=hash_password("Pass#1234"),
+    )
+    with TestingSessionLocal() as db:
+        db.add(no_membership_admin)
+        db.commit()
+    no_membership_headers = auth_headers(no_membership_admin_id)
+    assert client.get(
+        f"/api/v1/complaints/{complaint['id']}", headers=no_membership_headers
+    ).status_code == 404
+    assert client.get(
+        "/api/v1/complaints", headers=no_membership_headers
+    ).json()["items"] == []
+
+def test_platform_admin_uses_aggregates_and_audited_sensitive_access():
+    complaint = _create_transport_complaint()
+    admin_headers = auth_headers("adm-001")
+
+    assert client.get("/api/v1/complaints", headers=admin_headers).status_code == 403
+    assert client.get(
+        f"/api/v1/complaints/{complaint['id']}", headers=admin_headers
+    ).status_code == 404
+    no_reason = client.post(
+        f"/api/v1/complaints/{complaint['id']}/admin-access",
+        headers=admin_headers,
+        json={"reason": " "},
+    )
+    assert no_reason.status_code == 422
+
+    analytics = client.get(
+        "/api/v1/analytics/department", headers=admin_headers
+    )
+    assert analytics.status_code == 200
+    assert analytics.json()["total"] == 1
+    assert analytics.json()["staff_workload"] == []
+    assert analytics.json()["recent_activities"] == []
+
+    access = client.post(
+        f"/api/v1/complaints/{complaint['id']}/admin-access",
+        headers=admin_headers,
+        json={"reason": "Investigating a formally reported complaint safety concern"},
+    )
+    assert access.status_code == 200
+    assert access.json()["id"] == complaint["id"]
+    with TestingSessionLocal() as db:
+        event = db.scalar(select(AuditEvent).where(
+            AuditEvent.action == "SENSITIVE_COMPLAINT_ACCESSED",
+            AuditEvent.resource_id == complaint["id"],
+        ))
+        assert event is not None
+        assert event.actor_id == "adm-001"
+        assert "formally reported complaint safety concern" in event.details
+
+def test_login_validates_portal_and_profile_uses_authenticated_identity():
+    invalid_portal = client.post("/api/v1/auth/login", json={
+        "email": "citizen@test.civicone.test",
+        "password": "Pass#1234",
+        "portal": "unexpected",
+    })
+    assert invalid_portal.status_code == 422
+    staff_citizen_login = client.post("/api/v1/auth/login", json={
+        "email": "staff@test.civicone.test",
+        "password": "Pass#1234",
+        "portal": "citizen",
+    })
+    assert staff_citizen_login.status_code == 403
+
+    headers = auth_headers("cit-001")
+    updated = client.patch(
+        "/api/v1/auth/profile",
+        headers=headers,
+        json={"full_name": "Updated Citizen Name", "phone": "555-0101"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["full_name"] == "Updated Citizen Name"
+    assert updated.json()["phone"] == "555-0101"
+    assert client.patch(
+        "/api/v1/auth/profile",
+        headers=headers,
+        json={"user_id": "adm-001", "email": "new@example.com"},
+    ).status_code == 422
+    with TestingSessionLocal() as db:
+        assert db.get(User, "adm-001").email == "admin@test.civicone.test"
+        assert db.get(User, "cit-001").email == "citizen@test.civicone.test"
+
+def test_password_change_verifies_current_password_and_revokes_refresh_sessions():
+    login_response = client.post("/api/v1/auth/login", json={
+        "email": "citizen@test.civicone.test",
+        "password": "Pass#1234",
+        "portal": "citizen",
+    })
+    assert login_response.status_code == 200
+    tokens = login_response.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    wrong_current = client.post(
+        "/api/v1/auth/password/change",
+        headers=headers,
+        json={"current_password": "wrong-password", "new_password": "NextPass#1234"},
+    )
+    assert wrong_current.status_code == 403
+
+    changed = client.post(
+        "/api/v1/auth/password/change",
+        headers=headers,
+        json={"current_password": "Pass#1234", "new_password": "NextPass#1234"},
+    )
+    assert changed.status_code == 200
+    assert client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": tokens["refresh_token"]},
+    ).status_code == 401
+    with TestingSessionLocal() as db:
+        session = db.scalar(select(RefreshSession).where(
+            RefreshSession.user_id == "cit-001",
+            RefreshSession.token_hash.is_not(None),
+        ))
+        assert session is not None
+        assert session.is_revoked is True
+        assert verify_password("NextPass#1234", db.get(User, "cit-001").password_hash)
+
+    new_login = client.post("/api/v1/auth/login", json={
+        "email": "citizen@test.civicone.test",
+        "password": "NextPass#1234",
+        "portal": "citizen",
+    })
+    assert new_login.status_code == 200

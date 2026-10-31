@@ -4,7 +4,7 @@ import secrets
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 from ..core.config import settings
@@ -12,6 +12,8 @@ from ..core.database import get_db
 from ..core.dependencies import (
     can_manage_department,
     current_user,
+    require_citizen,
+    platform_admin_user,
     authorized_department_ids,
 )
 from ..core.logging import log_audit_event
@@ -47,7 +49,6 @@ class ComplaintIn(BaseModel):
     category: str = Field(min_length=2, max_length=50)
     address: str = Field(min_length=5, max_length=300)  # strictly manual entry; no GPS
     locality: str | None = Field(default=None, max_length=150)
-    image_url: str | None = None
 
 class StatusIn(BaseModel):
     new_status: str = Field(pattern="^(submitted|classified|assigned|acknowledged|in_progress|on_hold|resolved|closed|reopened|rejected)$")
@@ -67,6 +68,17 @@ class ReopenIn(BaseModel):
 
 class InformationRequestIn(BaseModel):
     message: str = Field(min_length=5, max_length=2000)
+
+class AdminSensitiveAccessIn(BaseModel):
+    reason: str = Field(min_length=10, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def require_nonblank_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("A non-empty access reason is required")
+        return normalized
 
 def _activity(db: Session, complaint_id: str, actor_id: str, action: str, summary: str, citizen_visible: bool = False):
     db.add(ComplaintActivity(
@@ -116,7 +128,7 @@ def _out(c: Complaint, db: Session | None = None):
         "department_name": dept_name,
         "assigned_to_user_id": c.assigned_to_user_id,
         "assigned_staff_name": assigned_staff_name,
-        "image_url": c.image_url,
+        "image_url": f"/api/v1/complaints/{c.id}/image" if c.image_url else None,
         "needs_review": c.needs_review,
         "classified_by": c.classified_by,
         "ai_confidence": c.ai_confidence,
@@ -131,27 +143,76 @@ def _visible(db: Session, user: User, c: Complaint) -> bool:
     if user.role == "citizen":
         return c.citizen_id == user.id
     if user.role == "platform_admin":
-        return True
+        return False
+    if user.role not in ("staff", "dept_admin"):
+        return False
     authorized_depts = authorized_department_ids(db, user)
     return c.department_id in authorized_depts
 
-@router.post("/upload-image")
-def upload_image(file: UploadFile = File(...), user: User = Depends(current_user)):
+@router.post("/{cid}/image")
+def upload_complaint_image(
+    cid: str,
+    file: UploadFile = File(...),
+    user: User = Depends(require_citizen),
+    db: Session = Depends(get_db),
+):
+    complaint = db.get(Complaint, cid)
+    if not complaint or complaint.citizen_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     content = file.file.read()
-    safe_name, detected_mime, _ = validate_and_save_upload(
+    safe_name, _, _ = validate_and_save_upload(
         filename=file.filename or "complaint.jpg",
         content=content,
         declared_content_type=file.content_type,
         allowed_types=ALLOWED_IMAGE_EXTENSIONS,
         prefix="complaint",
     )
-    return {"image_url": f"/uploads/{safe_name}", "filename": safe_name}
+    complaint.image_url = f"/uploads/{safe_name}"
+    db.commit()
+    return {"image_url": f"/api/v1/complaints/{cid}/image"}
+
+@router.get("/{cid}/image")
+def get_complaint_image(
+    cid: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.get(Complaint, cid)
+    if not complaint or not complaint.image_url or not _visible(db, user, complaint):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint image not found")
+    filename = os.path.basename(complaint.image_url)
+    safe_path = get_canonical_storage_path(filename)
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint image not found")
+    return FileResponse(safe_path)
+
+@router.post("/{cid}/admin-image")
+def get_complaint_image_as_platform_admin(
+    cid: str,
+    body: AdminSensitiveAccessIn,
+    user: User = Depends(platform_admin_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.get(Complaint, cid)
+    if not complaint or not complaint.image_url:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint image not found")
+    filename = os.path.basename(complaint.image_url)
+    safe_path = get_canonical_storage_path(filename)
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint image not found")
+    log_audit_event(
+        db,
+        action="SENSITIVE_COMPLAINT_ATTACHMENT_ACCESSED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="complaint",
+        resource_id=complaint.id,
+        details=f"Platform administrator accessed complaint image. Reason: {body.reason.strip()}",
+    )
+    return FileResponse(safe_path)
 
 @router.post("", status_code=201)
-def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    if user.role != "citizen":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only citizens can file civic complaints")
-
+def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(require_citizen), db: Session = Depends(get_db)):
     # Domain prefix reference matching screenshot convention
     prefix_map = {"transport": "T", "municipal": "M", "healthcare": "H"}
     pfx = prefix_map.get(body.domain, "CO")
@@ -179,7 +240,7 @@ def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(c
         locality=body.locality,
         priority=classification["priority"],
         department_id=dept_id,
-        image_url=body.image_url,
+        image_url=None,
         needs_review=needs_review,
         classified_by=classification["source"],
         ai_confidence=str(classification.get("confidence", "")),
@@ -229,7 +290,7 @@ def list_complaints(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     domain: str | None = None,
-    status: str | None = None,
+    complaint_status: str | None = Query(None, alias="status"),
     priority: str | None = None,
     category: str | None = None,
     assigned_to_user_id: str | None = None,
@@ -246,8 +307,11 @@ def list_complaints(
     if user.role == "citizen":
         q = q.where(Complaint.citizen_id == user.id)
     elif user.role == "platform_admin":
-        pass  # sees all
-    else:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Platform administrators must use aggregated analytics for routine complaint monitoring",
+        )
+    elif user.role in ("staff", "dept_admin"):
         # Department staff
         auth_depts = authorized_department_ids(db, user)
         if assigned_to_me:
@@ -257,11 +321,13 @@ def list_complaints(
             )
         else:
             q = q.where(Complaint.department_id.in_(auth_depts or {"none"}))
+    else:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account role is not authorized to view complaints")
 
     if domain:
         q = q.where(Complaint.domain == domain)
-    if status:
-        q = q.where(Complaint.status == status)
+    if complaint_status:
+        q = q.where(Complaint.status == complaint_status)
     if priority:
         q = q.where(Complaint.priority == priority)
     if category:
@@ -307,7 +373,7 @@ def list_complaint_staff_options(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role == "citizen":
+    if user.role not in ("staff", "dept_admin", "platform_admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Government staff credentials required")
     dept_ids = authorized_department_ids(db, user)
     query = (
@@ -328,12 +394,7 @@ def list_complaint_staff_options(
         for row in db.execute(query.order_by(User.full_name)).all()
     ]
 
-@router.get("/{cid}")
-def get_complaint_detail(cid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    c = db.get(Complaint, cid)
-    if not c or not _visible(db, user, c):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
-
+def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
     hist_q = select(StatusHistory).where(StatusHistory.complaint_id == cid).order_by(StatusHistory.created_at)
     if user.role == "citizen":
         hist_q = hist_q.where(StatusHistory.citizen_visible.is_(True))
@@ -387,6 +448,8 @@ def get_complaint_detail(cid: str, user: User = Depends(current_user), db: Sessi
     ).all()
 
     base = _out(c, db)
+    if user.role == "platform_admin":
+        base["image_url"] = None
     base["history"] = history_data
     base["internal_notes"] = notes_data
     base["activities"] = [
@@ -405,12 +468,40 @@ def get_complaint_detail(cid: str, user: User = Depends(current_user), db: Sessi
             "file_name": item.file_name,
             "mime_type": item.mime_type,
             "file_size": item.file_size,
-            "download_url": f"/api/v1/complaints/{cid}/evidence/{item.id}/download",
+            "download_url": None if user.role == "platform_admin" else f"/api/v1/complaints/{cid}/evidence/{item.id}/download",
             "created_at": item.created_at,
         }
         for item in evidence
     ]
     return base
+
+@router.get("/{cid}")
+def get_complaint_detail(cid: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    c = db.get(Complaint, cid)
+    if not c or not _visible(db, user, c):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    return _complaint_detail_payload(cid, c, user, db)
+
+@router.post("/{cid}/admin-access")
+def platform_admin_complaint_access(
+    cid: str,
+    body: AdminSensitiveAccessIn,
+    user: User = Depends(platform_admin_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.get(Complaint, cid)
+    if not complaint:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    log_audit_event(
+        db,
+        action="SENSITIVE_COMPLAINT_ACCESSED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="complaint",
+        resource_id=complaint.id,
+        details=f"Platform administrator accessed sensitive complaint details. Reason: {body.reason.strip()}",
+    )
+    return _complaint_detail_payload(cid, complaint, user, db)
 
 @router.post("/{cid}/status")
 def update_complaint_status(
@@ -619,8 +710,10 @@ def request_additional_information(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role == "citizen":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only government staff can request information")
     c = db.get(Complaint, cid)
-    if user.role == "citizen" or not c or not _visible(db, user, c):
+    if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     _activity(db, c.id, user.id, "information_requested", body.message, True)
     db.add(Notification(
@@ -649,8 +742,10 @@ def upload_resolution_evidence(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
+    if user.role == "citizen":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only government staff can upload resolution evidence")
     c = db.get(Complaint, cid)
-    if user.role == "citizen" or not c or not _visible(db, user, c):
+    if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     content = file.file.read()
     filename, detected_mime, file_size = validate_and_save_upload(
@@ -706,11 +801,38 @@ def download_complaint_evidence(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence file not found")
     return FileResponse(safe_path, media_type=evidence.mime_type, filename=evidence.file_name)
 
+@router.post("/{cid}/evidence/{evidence_id}/admin-download")
+def platform_admin_download_evidence(
+    cid: str,
+    evidence_id: str,
+    body: AdminSensitiveAccessIn,
+    user: User = Depends(platform_admin_user),
+    db: Session = Depends(get_db),
+):
+    complaint = db.get(Complaint, cid)
+    evidence = db.get(ComplaintEvidence, evidence_id)
+    if not complaint or not evidence or evidence.complaint_id != complaint.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
+    filename = os.path.basename(evidence.file_path)
+    safe_path = get_canonical_storage_path(filename)
+    if not os.path.isfile(safe_path):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence file not found")
+    log_audit_event(
+        db,
+        action="SENSITIVE_COMPLAINT_ATTACHMENT_ACCESSED",
+        actor_id=user.id,
+        actor_email=user.email,
+        resource_type="complaint_evidence",
+        resource_id=evidence.id,
+        details=f"Platform administrator downloaded complaint evidence. Reason: {body.reason.strip()}",
+    )
+    return FileResponse(safe_path, media_type=evidence.mime_type, filename=evidence.file_name)
+
 @router.post("/{cid}/reopen")
 def reopen_complaint(
     cid: str,
     body: ReopenIn,
-    user: User = Depends(current_user),
+    user: User = Depends(require_citizen),
     db: Session = Depends(get_db)
 ):
     c = db.get(Complaint, cid)
