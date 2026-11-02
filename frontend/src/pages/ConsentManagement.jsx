@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Shield, ShieldAlert, Plus, CheckCircle2, AlertCircle, Trash2, Clock, Building } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Shield, Plus, CheckCircle2, AlertCircle } from "lucide-react";
 import { listConsentGrants, createConsentGrant, revokeConsentGrant, listOrganizations } from "../services/services";
 import { errMsg } from "../services/axios";
 

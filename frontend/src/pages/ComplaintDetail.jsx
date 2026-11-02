@@ -1,29 +1,16 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate, useOutletContext } from "react-router-dom";
-import {
-  MapPin,
-  Calendar,
-  Building,
-  User,
-  ArrowLeft,
-  Clock,
-  CheckCircle2,
-  AlertCircle,
-  RotateCcw,
-  MessageSquare,
-  FileText,
-  Sparkles,
-  Send,
-  Lock
-} from "lucide-react";
-import StatusBadge from "../components/common/StatusBadge";
+import { MapPin, Calendar, Building, ArrowLeft, Clock, CheckCircle2, AlertCircle, Sparkles, Lock } from "lucide-react";
+import StatusBadge, {
+  COMPLAINT_STATUSES,
+  COMPLAINT_STATUS_TRANSITIONS,
+} from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import {
   getComplaint,
   updateComplaintStatus,
   assignComplaint,
   addInternalNote,
-  reopenComplaint,
   requestComplaintInformation,
   uploadComplaintEvidence,
   listComplaintStaffOptions,
@@ -52,7 +39,6 @@ export default function ComplaintDetail() {
   const [statusReason, setStatusReason] = useState("");
   const [citizenVisible, setCitizenVisible] = useState(true);
   const [internalNoteText, setInternalNoteText] = useState("");
-  const [reopenReason, setReopenReason] = useState("");
   const [submittingAction, setSubmittingAction] = useState(false);
   const [staffOptions, setStaffOptions] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -125,7 +111,10 @@ export default function ComplaintDetail() {
 
   const handleStatusChange = async (e) => {
     e.preventDefault();
-    if (newStatus === complaint?.status) return;
+    if (
+      !complaint
+      || !COMPLAINT_STATUS_TRANSITIONS[complaint.status]?.includes(newStatus)
+    ) return;
     setSubmittingAction(true);
     setError(null);
     try {
@@ -134,7 +123,10 @@ export default function ComplaintDetail() {
         reason: statusReason || undefined,
         citizen_visible: citizenVisible,
       });
-      setActionSuccess(`Status updated to ${newStatus.replace("_", " ")}`);
+      const updatedLabel = COMPLAINT_STATUSES.find(
+        (status) => status.value === newStatus
+      )?.label;
+      setActionSuccess(`Status updated to ${updatedLabel}`);
       setStatusReason("");
       loadDetail();
     } catch (err) {
@@ -153,23 +145,6 @@ export default function ComplaintDetail() {
       await addInternalNote(id, internalNoteText);
       setActionSuccess("Internal note recorded.");
       setInternalNoteText("");
-      loadDetail();
-    } catch (err) {
-      setError(errMsg(err));
-    } finally {
-      setSubmittingAction(false);
-    }
-  };
-
-  const handleReopen = async (e) => {
-    e.preventDefault();
-    if (!reopenReason.trim()) return;
-    setSubmittingAction(true);
-    setError(null);
-    try {
-      await reopenComplaint(id, reopenReason);
-      setActionSuccess("Complaint has been reopened for department review.");
-      setReopenReason("");
       loadDetail();
     } catch (err) {
       setError(errMsg(err));
@@ -255,18 +230,10 @@ export default function ComplaintDetail() {
     );
   }
 
-  const allowedStatuses = [
-    "submitted",
-    "classified",
-    "assigned",
-    "acknowledged",
-    "in_progress",
-    "on_hold",
-    "resolved",
-    "closed",
-    "reopened",
-    "rejected"
-  ];
+  const allowedStatuses = COMPLAINT_STATUS_TRANSITIONS[complaint.status] || [];
+  const currentStatus = COMPLAINT_STATUSES.find(
+    (status) => status.value === complaint.status
+  );
   const timeline = [
     ...(complaint.history || []).map((item) => ({
       ...item,
@@ -342,7 +309,10 @@ export default function ComplaintDetail() {
             <span className="text-slate-400 font-medium block">Assigned Department:</span>
             <p className="font-semibold text-slate-800 mt-0.5 flex items-center gap-1">
               <Building size={14} className="text-slate-400" />
-              <span>{complaint.department_name || "Central Review Queue"}</span>
+              <span>
+                {complaint.department_name
+                  || (complaint.needs_review ? "Department assignment pending review" : "Department not assigned")}
+              </span>
             </p>
           </div>
           <div>
@@ -417,23 +387,32 @@ export default function ComplaintDetail() {
           </div>
         )}
 
-        {/* AI Classification Info */}
-        <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-100 text-xs text-blue-900 space-y-1">
-          <div className="flex items-center gap-1.5 font-bold">
-            <Sparkles size={14} className="text-blue-600" />
-            <span>AI Classification Audit Result</span>
+        {isStaff && (
+          <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-100 text-xs text-blue-900 space-y-1">
+            <div className="flex items-center gap-1.5 font-bold">
+              <Sparkles size={14} className="text-blue-600" />
+              <span>AI Classification Audit Result</span>
+            </div>
+            <p>
+              Method: <span className="font-semibold uppercase">{complaint.classified_by}</span> • Category: <span className="font-semibold">{complaint.category}</span> • Priority: <span className="font-semibold uppercase">{complaint.priority}</span>
+            </p>
+            {complaint.ai_explanation && (
+              <p className="text-blue-700 italic">"{complaint.ai_explanation}"</p>
+            )}
           </div>
-          <p>
-            Method: <span className="font-semibold uppercase">{complaint.classified_by}</span> • Category: <span className="font-semibold">{complaint.category}</span> • Priority: <span className="font-semibold uppercase">{complaint.priority}</span>
-          </p>
-          {complaint.ai_explanation && (
-            <p className="text-blue-700 italic">"{complaint.ai_explanation}"</p>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Staff Actions Section (Only for Staff / Admin) */}
-      {isStaff && (
+      {isStaff && !complaint.can_process && (
+        <div className="card p-4 border border-slate-200 bg-slate-50 text-sm text-slate-600">
+          You can view this complaint and its resolution history because it belongs
+          to your organization. Processing actions and internal notes are limited to
+          staff authorized for its department.
+        </div>
+      )}
+
+      {isStaff && complaint.can_process && (
         <div className="card p-6 sm:p-8 border border-slate-200 space-y-6">
           <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-3">
             Department Processing & Workflow
@@ -487,13 +466,22 @@ export default function ComplaintDetail() {
                 <select
                   value={newStatus}
                   onChange={(e) => setNewStatus(e.target.value)}
+                  disabled={!currentStatus || allowedStatuses.length === 0}
                   className="input capitalize"
                 >
-                  {allowedStatuses.map((st) => (
-                    <option key={st} value={st}>
-                      {st.replace("_", " ")}
-                    </option>
-                  ))}
+                  <option value={complaint.status}>
+                    {currentStatus?.label || "Unsupported status"}
+                  </option>
+                  {allowedStatuses.map((statusValue) => {
+                    const status = COMPLAINT_STATUSES.find(
+                      (item) => item.value === statusValue
+                    );
+                    return (
+                      <option key={statusValue} value={statusValue}>
+                        {status.label}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -520,20 +508,22 @@ export default function ComplaintDetail() {
               <textarea
                 rows={2}
                 value={statusReason}
-                required={["resolved", "rejected"].includes(newStatus)}
+                required={newStatus === "resolved"}
                 onChange={(e) => setStatusReason(e.target.value)}
                 placeholder={newStatus === "resolved"
                   ? "Required: record the resolution and work completed..."
-                  : newStatus === "rejected"
-                  ? "Required: explain why this complaint is rejected..."
-                  : "Explain the update (e.g. dispatched repair crew, ordered replacement parts)..."}
+                  : "Explain the status update..."}
                 className="input"
               ></textarea>
             </div>
 
             <button
               type="submit"
-              disabled={submittingAction || newStatus === complaint.status}
+              disabled={
+                submittingAction
+                || newStatus === complaint.status
+                || !allowedStatuses.includes(newStatus)
+              }
               className="btn text-xs sm:text-sm font-semibold py-2 px-5 disabled:opacity-50"
             >
               Update Status
@@ -623,33 +613,6 @@ export default function ComplaintDetail() {
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Citizen Reopening Option (If resolved or closed) */}
-      {!isStaff && ["resolved", "closed"].includes(complaint.status) && (
-        <div className="card p-6 border border-slate-200 space-y-4 bg-amber-50/40">
-          <div className="flex items-center gap-2 text-slate-900 font-bold text-sm">
-            <RotateCcw size={16} className="text-amber-600" />
-            <span>Unsatisfied with resolution? Reopen this complaint</span>
-          </div>
-          <form onSubmit={handleReopen} className="space-y-3">
-            <textarea
-              rows={2}
-              required
-              value={reopenReason}
-              onChange={(e) => setReopenReason(e.target.value)}
-              placeholder="State why the issue requires further inspection or is still unresolved..."
-              className="input text-xs"
-            ></textarea>
-            <button
-              type="submit"
-              disabled={submittingAction || !reopenReason.trim()}
-              className="btn bg-amber-600 hover:bg-amber-700 text-xs py-2 px-4"
-            >
-              Request Reopen
-            </button>
-          </form>
         </div>
       )}
 

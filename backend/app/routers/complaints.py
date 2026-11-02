@@ -1,5 +1,4 @@
 import os
-import uuid
 import secrets
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Request, status
@@ -7,7 +6,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
-from ..core.config import settings
 from ..core.database import get_db
 from ..core.dependencies import (
     can_manage_department,
@@ -43,10 +41,11 @@ from ..core.permissions import can_transition
 router = APIRouter(prefix="/api/v1/complaints", tags=["complaints"])
 
 class ComplaintIn(BaseModel):
-    domain: str = Field(pattern="^(transport|municipal|healthcare)$")
+    organization_id: str | None = None
+    domain: str | None = Field(default=None, pattern="^(transport|municipal|healthcare)$")
     title: str = Field(min_length=5, max_length=200)
     description: str = Field(min_length=10, max_length=4000)
-    category: str = Field(min_length=2, max_length=50)
+    category: str | None = Field(default=None, min_length=2, max_length=50)
     address: str = Field(min_length=5, max_length=300)  # strictly manual entry; no GPS
     locality: str | None = Field(default=None, max_length=150)
 
@@ -101,19 +100,26 @@ def _set_resolution_deadline(db: Session, complaint: Complaint) -> None:
     if sla:
         complaint.resolution_due_at = datetime.now(timezone.utc) + timedelta(hours=sla.resolution_hours)
 
-def _out(c: Complaint, db: Session | None = None):
+def _out(c: Complaint, db: Session | None = None, user: User | None = None):
     dept_name = None
     assigned_staff_name = None
+    organization_id = c.organization_id
+    organization_name = None
     if c.department_id and db:
         d = db.get(Department, c.department_id)
         if d:
             dept_name = d.name
+            organization_id = organization_id or d.organization_id
+    if organization_id and db:
+        organization = db.get(Organization, organization_id)
+        if organization:
+            organization_name = organization.name
     if c.assigned_to_user_id and db:
         u = db.get(User, c.assigned_to_user_id)
         if u:
             assigned_staff_name = u.full_name
 
-    return {
+    result = {
         "id": c.id,
         "reference": c.reference,
         "domain": c.domain,
@@ -124,6 +130,8 @@ def _out(c: Complaint, db: Session | None = None):
         "locality": c.locality,
         "priority": c.priority,
         "status": c.status,
+        "organization_id": organization_id,
+        "organization_name": organization_name,
         "department_id": c.department_id,
         "department_name": dept_name,
         "assigned_to_user_id": c.assigned_to_user_id,
@@ -135,19 +143,61 @@ def _out(c: Complaint, db: Session | None = None):
         "ai_explanation": c.ai_explanation,
         "resolution_summary": c.resolution_summary,
         "resolution_due_at": c.resolution_due_at,
+        "resolved_at": c.resolved_at,
         "created_at": c.created_at,
         "updated_at": c.updated_at
     }
+    if user and user.role == "citizen":
+        for field in (
+            "assigned_to_user_id",
+            "assigned_staff_name",
+            "classified_by",
+            "ai_confidence",
+            "ai_explanation",
+        ):
+            result.pop(field, None)
+    return result
 
 def _visible(db: Session, user: User, c: Complaint) -> bool:
     if user.role == "citizen":
         return c.citizen_id == user.id
     if user.role == "platform_admin":
         return False
-    if user.role not in ("staff", "dept_admin"):
+    if user.role not in ("staff", "org_admin"):
         return False
     authorized_depts = authorized_department_ids(db, user)
-    return c.department_id in authorized_depts
+    if user.role == "staff":
+        authorized_orgs = db.scalars(
+            select(Department.organization_id).where(
+                Department.id.in_(authorized_depts or {"none"})
+            )
+        ).all()
+        return c.organization_id in set(authorized_orgs)
+    if c.department_id in authorized_depts:
+        return True
+    if c.needs_review and c.department_id is None and c.organization_id:
+        authorized_orgs = db.scalars(
+            select(Department.organization_id).where(
+                Department.id.in_(authorized_depts or {"none"})
+            )
+        ).all()
+        return c.organization_id in set(authorized_orgs)
+    return False
+
+def _can_process_complaint(db: Session, user: User, c: Complaint) -> bool:
+    if user.role not in ("staff", "org_admin"):
+        return False
+    authorized_depts = authorized_department_ids(db, user)
+    if c.department_id in authorized_depts:
+        return True
+    if c.needs_review and c.department_id is None and c.organization_id:
+        authorized_orgs = db.scalars(
+            select(Department.organization_id).where(
+                Department.id.in_(authorized_depts or {"none"})
+            )
+        ).all()
+        return c.organization_id in set(authorized_orgs)
+    return False
 
 @router.post("/{cid}/image")
 def upload_complaint_image(
@@ -213,33 +263,75 @@ def get_complaint_image_as_platform_admin(
 
 @router.post("", status_code=201)
 def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(require_citizen), db: Session = Depends(get_db)):
+    if body.organization_id:
+        organization = db.get(Organization, body.organization_id)
+        if not organization:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        if body.domain and body.domain != organization.domain:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Organization and domain do not match")
+    elif body.domain:
+        organizations = db.scalars(
+            select(Organization).where(Organization.domain == body.domain)
+        ).all()
+        if not organizations:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        if len(organizations) != 1:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Select a specific organization before submitting",
+            )
+        organization = organizations[0]
+    else:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Select an organization")
+
     # Domain prefix reference matching screenshot convention
     prefix_map = {"transport": "T", "municipal": "M", "healthcare": "H"}
-    pfx = prefix_map.get(body.domain, "CO")
+    domain = organization.domain
+    pfx = prefix_map.get(domain, "CO")
     ref_num = secrets.randbelow(9000) + 1000
     reference = f"#{pfx}-2024-{ref_num:04d}"
 
-    # AI-assisted classification with deterministic fallback
-    classification = classify_complaint(body.title, body.description, body.domain)
+    supported_categories = db.scalars(
+        select(Department.category_key).where(
+            Department.organization_id == organization.id
+        ).distinct()
+    ).all()
+    classification = classify_complaint(
+        body.title,
+        body.description,
+        domain,
+        supported_categories=list(supported_categories),
+    )
+    classified_category = str(classification.get("category") or "").strip().lower()
+    if classified_category not in supported_categories:
+        classification["confident"] = False
+        classification["review_reason"] = "Classification category is not supported by this organization."
+        classified_category = "general"
+    dept_id = None
+    if classification.get("confident"):
+        dept_id = route_department(db, organization.id, classified_category)
 
-    # Route to department based on classified or provided category
-    cat_to_route = (classification["category"] if classification.get("confident") else body.category).strip().lower()
-    dept_id = route_department(db, body.domain, cat_to_route)
-
-    needs_review = (not classification.get("confident")) or (classification["priority"] == "critical") or (dept_id is None)
+    review_reason = classification.get("review_reason")
+    if not dept_id and not review_reason:
+        review_reason = "No department in the selected organization matches the classified category."
+    if classification.get("priority") == "critical" and not review_reason:
+        review_reason = "Critical-priority complaints require manual department review."
+    needs_review = bool(review_reason) or classification.get("priority") == "critical" or dept_id is None
     initial_status = "submitted" if needs_review else "assigned"
 
     c = Complaint(
         reference=reference,
         citizen_id=user.id,
-        domain=body.domain,
+        domain=domain,
+        organization_id=organization.id,
         title=body.title,
         description=body.description,
-        category=(classification["category"] if body.category == "general" else body.category).strip().lower(),
+        category=classified_category,
         address=body.address,
         locality=body.locality,
         priority=classification["priority"],
         department_id=dept_id,
+        assigned_to_user_id=None,
         image_url=None,
         needs_review=needs_review,
         classified_by=classification["source"],
@@ -257,7 +349,11 @@ def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(r
         previous_status=None,
         new_status=initial_status,
         actor_id=user.id,
-        reason="Complaint submitted by citizen",
+        reason=(
+            "Complaint submitted and awaiting department review."
+            if needs_review
+            else "Complaint submitted and routed to a department."
+        ),
         citizen_visible=True
     ))
 
@@ -269,7 +365,27 @@ def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(r
         link=f"/app/complaints/{c.id}",
         notification_type="complaint"
     ))
-    _activity(db, c.id, user.id, "submitted", "Complaint submitted.", True)
+    _activity(
+        db,
+        c.id,
+        user.id,
+        "submitted",
+        (
+            "Complaint submitted and awaiting department review."
+            if needs_review
+            else "Complaint submitted and routed to a department."
+        ),
+        True,
+    )
+    if needs_review:
+        _activity(
+            db,
+            c.id,
+            user.id,
+            "classification_review_required",
+            f"Department assignment requires manual review: {review_reason or 'No department match.'}",
+            False,
+        )
 
     log_audit_event(
         db,
@@ -278,12 +394,12 @@ def create_complaint(body: ComplaintIn, request: Request, user: User = Depends(r
         actor_email=user.email,
         resource_type="complaint",
         resource_id=c.id,
-        details=f"Reference: {reference}, Domain: {body.domain}",
+        details=f"Reference: {reference}, Organization: {organization.name}",
         ip_address=request.client.host if request.client else None
     )
 
     db.commit()
-    return _out(c, db)
+    return _out(c, db, user)
 
 @router.get("")
 def list_complaints(
@@ -311,16 +427,33 @@ def list_complaints(
             status.HTTP_403_FORBIDDEN,
             "Platform administrators must use aggregated analytics for routine complaint monitoring",
         )
-    elif user.role in ("staff", "dept_admin"):
-        # Department staff
+    elif user.role == "staff":
         auth_depts = authorized_department_ids(db, user)
+        auth_org_ids = db.scalars(
+            select(Department.organization_id).where(
+                Department.id.in_(auth_depts or {"none"})
+            )
+        ).all()
+        q = q.where(Complaint.organization_id.in_(set(auth_org_ids) or {"none"}))
         if assigned_to_me:
             q = q.where(
-                Complaint.assigned_to_user_id == user.id,
-                Complaint.department_id.in_(auth_depts or {"none"}),
+                Complaint.assigned_to_user_id == user.id
             )
-        else:
-            q = q.where(Complaint.department_id.in_(auth_depts or {"none"}))
+    elif user.role == "org_admin":
+        auth_depts = authorized_department_ids(db, user)
+        auth_org_ids = db.scalars(
+            select(Department.organization_id).where(
+                Department.id.in_(auth_depts or {"none"})
+            )
+        ).all()
+        q = q.where(or_(
+            Complaint.department_id.in_(auth_depts or {"none"}),
+            (
+                Complaint.organization_id.in_(set(auth_org_ids) or {"none"})
+                & Complaint.department_id.is_(None)
+                & Complaint.needs_review.is_(True)
+            ),
+        ))
     else:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account role is not authorized to view complaints")
 
@@ -359,12 +492,17 @@ def list_complaints(
     rows = db.scalars(
         q.order_by(Complaint.created_at.desc()).offset((page - 1) * size).limit(size)
     ).all()
+    items = []
+    for complaint in rows:
+        item = _out(complaint, db, user)
+        item["can_process"] = _can_process_complaint(db, user, complaint)
+        items.append(item)
 
     return {
         "total": total,
         "page": page,
         "size": size,
-        "items": [_out(c, db) for c in rows]
+        "items": items
     }
 
 @router.get("/staff-options")
@@ -373,7 +511,7 @@ def list_complaint_staff_options(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    if user.role not in ("staff", "dept_admin", "platform_admin"):
+    if user.role not in ("staff", "org_admin", "platform_admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Government staff credentials required")
     dept_ids = authorized_department_ids(db, user)
     query = (
@@ -401,7 +539,11 @@ def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
     hist = db.scalars(hist_q).all()
 
     notes_data = []
-    if user.role != "citizen":
+    authorized_depts = authorized_department_ids(db, user)
+    can_view_department_notes = (
+        user.role == "platform_admin" or c.department_id in authorized_depts
+    )
+    if user.role != "citizen" and can_view_department_notes:
         notes = db.scalars(
             select(ComplaintInternalNote)
             .where(ComplaintInternalNote.complaint_id == cid)
@@ -426,7 +568,11 @@ def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
             "reason": h.reason,
             "citizen_visible": h.citizen_visible,
             "created_at": h.created_at,
-            "actor_name": h.actor.full_name if h.actor else "System"
+            "actor_name": (
+                "CivicOne team"
+                if user.role == "citizen"
+                else h.actor.full_name if h.actor else "System"
+            )
         }
         for h in hist
     ]
@@ -442,12 +588,14 @@ def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
         select(ComplaintEvidence)
         .where(
             ComplaintEvidence.complaint_id == cid,
-            ComplaintEvidence.citizen_visible.is_(True) if user.role == "citizen" else True,
+            ComplaintEvidence.citizen_visible.is_(True)
+            if user.role == "citizen" or c.department_id not in authorized_depts
+            else True,
         )
         .order_by(ComplaintEvidence.created_at)
     ).all()
 
-    base = _out(c, db)
+    base = _out(c, db, user)
     if user.role == "platform_admin":
         base["image_url"] = None
     base["history"] = history_data
@@ -457,7 +605,11 @@ def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
             "id": item.id,
             "action": item.action,
             "summary": item.summary,
-            "actor_name": item.actor.full_name if item.actor else "Staff",
+            "actor_name": (
+                "CivicOne team"
+                if user.role == "citizen"
+                else item.actor.full_name if item.actor else "Staff"
+            ),
             "created_at": item.created_at,
         }
         for item in activities
@@ -473,6 +625,7 @@ def _complaint_detail_payload(cid: str, c: Complaint, user: User, db: Session):
         }
         for item in evidence
     ]
+    base["can_process"] = _can_process_complaint(db, user, c)
     return base
 
 @router.get("/{cid}")
@@ -517,6 +670,8 @@ def update_complaint_status(
     if user.role == "citizen":
         if not (c.status in ("resolved", "closed") and body.new_status == "reopened"):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Citizens can only request reopening of resolved complaints")
+    elif not _can_process_complaint(db, user, c):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can update its status")
 
     legacy_staff_transition = body.new_status in {
         "acknowledged", "in_progress", "on_hold", "resolved"
@@ -546,6 +701,10 @@ def update_complaint_status(
 
     if body.new_status == "resolved" and body.reason:
         c.resolution_summary = body.reason
+    if body.new_status == "resolved":
+        c.resolved_at = datetime.now(timezone.utc)
+    elif body.new_status == "reopened":
+        c.resolved_at = None
 
     hist = StatusHistory(
         complaint_id=c.id,
@@ -583,7 +742,7 @@ def update_complaint_status(
     )
 
     db.commit()
-    return _out(c, db)
+    return _out(c, db, user)
 
 @router.post("/{cid}/assign")
 def assign_complaint(
@@ -598,10 +757,26 @@ def assign_complaint(
     c = db.get(Complaint, cid)
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    if not _can_process_complaint(db, user, c):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can assign it")
 
     target_department_id = body.department_id or c.department_id
     if not target_department_id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Select a department before assigning this complaint")
+    target_department = db.get(Department, target_department_id)
+    if not target_department:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Department not found")
+    source_organization_id = c.organization_id
+    if not source_organization_id and c.department_id:
+        source_department = db.get(Department, c.department_id)
+        source_organization_id = source_department.organization_id if source_department else None
+    if not source_organization_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Complaint organization is unknown; organization assignment requires manual data review",
+        )
+    if target_department.organization_id != source_organization_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Complaints cannot be reassigned to another organization")
     if c.department_id and c.department_id != target_department_id and not can_manage_department(db, user, c.department_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot reassign complaints from this department")
     if not can_manage_department(db, user, target_department_id):
@@ -617,13 +792,26 @@ def assign_complaint(
             )
         )
         assigned_staff = db.get(User, body.assigned_to_user_id)
-        if not membership or not assigned_staff or assigned_staff.role == "citizen" or not assigned_staff.is_active:
+        if (
+            not membership
+            or not assigned_staff
+            or assigned_staff.role != "staff"
+            or not assigned_staff.is_active
+        ):
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Assigned staff must be an active member of the target department")
 
+    previous_department_id = c.department_id
+    previous_assignee_id = c.assigned_to_user_id
+    previous_department = db.get(Department, previous_department_id) if previous_department_id else None
+    previous_assignee = db.get(User, previous_assignee_id) if previous_assignee_id else None
+    department_changed = previous_department_id != target_department_id
     c.department_id = target_department_id
+    c.organization_id = target_department.organization_id
     c.assigned_to_user_id = body.assigned_to_user_id
-    c.resolution_due_at = None
-    _set_resolution_deadline(db, c)
+    if department_changed:
+        c.resolution_due_at = None
+    if department_changed or c.resolution_due_at is None:
+        _set_resolution_deadline(db, c)
     c.needs_review = False
     old_status = c.status
     if c.status == "submitted":
@@ -645,9 +833,26 @@ def assign_complaint(
         ))
     _activity(
         db, c.id, user.id, "assigned",
-        f"Assigned to {assigned_staff.full_name if assigned_staff else 'department queue'}.",
+        f"Complaint assigned to {target_department.name}.",
         True,
     )
+    if department_changed or previous_assignee_id != body.assigned_to_user_id:
+        old_assignment = (
+            f"{previous_department.name if previous_department else 'unassigned department'}"
+            f" / {previous_assignee.full_name if previous_assignee else 'department queue'}"
+        )
+        new_assignment = (
+            f"{target_department.name}"
+            f" / {assigned_staff.full_name if assigned_staff else 'department queue'}"
+        )
+        _activity(
+            db,
+            c.id,
+            user.id,
+            "assignment_changed",
+            f"Assignment changed from {old_assignment} to {new_assignment}.",
+            False,
+        )
 
     if c.citizen_id:
         db.add(Notification(
@@ -665,11 +870,14 @@ def assign_complaint(
         actor_email=user.email,
         resource_type="complaint",
         resource_id=c.id,
-        details=f"Assigned to staff={body.assigned_to_user_id}, dept={body.department_id}"
+        details=(
+            f"Assigned to staff={body.assigned_to_user_id}, "
+            f"dept={target_department_id}"
+        )
     )
 
     db.commit()
-    return _out(c, db)
+    return _out(c, db, user)
 
 @router.post("/{cid}/notes")
 def add_internal_note(
@@ -684,6 +892,8 @@ def add_internal_note(
     c = db.get(Complaint, cid)
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    if not _can_process_complaint(db, user, c):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can add internal notes")
 
     note = ComplaintInternalNote(
         complaint_id=c.id,
@@ -715,6 +925,8 @@ def request_additional_information(
     c = db.get(Complaint, cid)
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    if not _can_process_complaint(db, user, c):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can request information")
     _activity(db, c.id, user.id, "information_requested", body.message, True)
     db.add(Notification(
         user_id=c.citizen_id,
@@ -747,6 +959,8 @@ def upload_resolution_evidence(
     c = db.get(Complaint, cid)
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
+    if not _can_process_complaint(db, user, c):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can upload evidence")
     content = file.file.read()
     filename, detected_mime, file_size = validate_and_save_upload(
         filename=file.filename or "resolution-evidence.pdf",
@@ -794,6 +1008,12 @@ def download_complaint_evidence(
     if not c or not evidence or evidence.complaint_id != c.id or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
     if user.role == "citizen" and not evidence.citizen_visible:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
+    if (
+        user.role in ("staff", "org_admin")
+        and not evidence.citizen_visible
+        and c.department_id not in authorized_department_ids(db, user)
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
     filename = os.path.basename(evidence.file_path)
     safe_path = get_canonical_storage_path(filename)
@@ -863,4 +1083,4 @@ def reopen_complaint(
     )
 
     db.commit()
-    return _out(c, db)
+    return _out(c, db, user)

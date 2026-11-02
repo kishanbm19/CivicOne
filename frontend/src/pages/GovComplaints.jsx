@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { Link, useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
-import { Search, Filter, RefreshCw, AlertCircle, CheckCircle2, ChevronRight } from "lucide-react";
-import StatusBadge from "../components/common/StatusBadge";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
+import { Search, RefreshCw } from "lucide-react";
+import StatusBadge, { COMPLAINT_STATUSES } from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import { listComplaints, listComplaintStaffOptions } from "../services/complaints";
 
@@ -13,6 +13,8 @@ export default function GovComplaints() {
 
   const [activeTab, setActiveTab] = useState(searchParams.get("filter") === "assigned_to_me" ? "assigned_to_me" : "all");
   const [complaints, setComplaints] = useState([]);
+  const [totalComplaints, setTotalComplaints] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("");
@@ -24,11 +26,12 @@ export default function GovComplaints() {
   const [staffOptions, setStaffOptions] = useState([]);
   const [search, setSearch] = useState("");
 
-  const fetchComplaints = () => {
+  const fetchComplaints = (requestedPage = page) => {
     setLoading(true);
     const endOfDay = endDate ? new Date(`${endDate}T23:59:59`).toISOString() : undefined;
     listComplaints({
       domain: activeDomain,
+      page: requestedPage,
       status: statusFilter || undefined,
       priority: priorityFilter || undefined,
       category: categoryFilter || undefined,
@@ -40,14 +43,17 @@ export default function GovComplaints() {
       assigned_to_me: activeTab === "assigned_to_me",
       size: 50,
     })
-      .then((data) => setComplaints(data.items || []))
+      .then((data) => {
+        setComplaints(data.items || []);
+        setTotalComplaints(data.total || 0);
+      })
       .catch((err) => console.error("Error loading staff complaints:", err))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchComplaints();
-  }, [activeDomain, activeTab, statusFilter, priorityFilter, categoryFilter, assignedStaffFilter, startDate, endDate, overdueOnly]);
+  }, [activeDomain, activeTab, statusFilter, priorityFilter, categoryFilter, assignedStaffFilter, startDate, endDate, overdueOnly, page]);
 
   useEffect(() => {
     listComplaintStaffOptions(activeDomain)
@@ -57,7 +63,8 @@ export default function GovComplaints() {
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    fetchComplaints();
+    setPage(1);
+    fetchComplaints(1);
   };
 
   return (
@@ -66,10 +73,10 @@ export default function GovComplaints() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-            Department Complaint Queue
+            Organization Complaint Queue
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Review, assign, process, and resolve civic complaints within authorized department scope.
+            Review all complaints across your organization. Processing actions remain limited to your authorized departments.
           </p>
         </div>
       </div>
@@ -77,17 +84,23 @@ export default function GovComplaints() {
       {/* Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200">
         <button
-          onClick={() => setActiveTab("all")}
+          onClick={() => {
+            setPage(1);
+            setActiveTab("all");
+          }}
           className={`px-4 py-2 text-xs sm:text-sm font-bold border-b-2 transition-colors ${
             activeTab === "all"
               ? "border-blue-600 text-blue-600"
               : "border-transparent text-slate-500 hover:text-slate-800"
           }`}
         >
-          All Department Complaints
+          All Organization Complaints
         </button>
         <button
-          onClick={() => setActiveTab("assigned_to_me")}
+          onClick={() => {
+            setPage(1);
+            setActiveTab("assigned_to_me");
+          }}
           className={`px-4 py-2 text-xs sm:text-sm font-bold border-b-2 transition-colors ${
             activeTab === "assigned_to_me"
               ? "border-blue-600 text-blue-600"
@@ -115,23 +128,25 @@ export default function GovComplaints() {
           {/* Status Filter */}
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setStatusFilter(e.target.value);
+            }}
             className="input py-2 text-xs w-auto capitalize"
           >
             <option value="">All Statuses</option>
-            <option value="submitted">Submitted</option>
-            <option value="rejected">Rejected</option>
-            <option value="assigned">Assigned</option>
-            <option value="in_progress">In Progress</option>
-            <option value="on_hold">On Hold</option>
-            <option value="resolved">Resolved</option>
-            <option value="closed">Closed</option>
+            {COMPLAINT_STATUSES.map((status) => (
+              <option key={status.value} value={status.value}>{status.label}</option>
+            ))}
           </select>
 
           <input
             type="text"
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setCategoryFilter(e.target.value);
+            }}
             placeholder="Category"
             aria-label="Filter by category"
             className="input py-2 text-xs w-28"
@@ -139,7 +154,10 @@ export default function GovComplaints() {
 
           <select
             value={assignedStaffFilter}
-            onChange={(e) => setAssignedStaffFilter(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setAssignedStaffFilter(e.target.value);
+            }}
             aria-label="Filter by assigned staff"
             className="input py-2 text-xs w-auto"
           >
@@ -152,14 +170,20 @@ export default function GovComplaints() {
           <input
             type="date"
             value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setStartDate(e.target.value);
+            }}
             aria-label="Created from"
             className="input py-2 text-xs w-auto"
           />
           <input
             type="date"
             value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setEndDate(e.target.value);
+            }}
             aria-label="Created through"
             className="input py-2 text-xs w-auto"
           />
@@ -167,7 +191,10 @@ export default function GovComplaints() {
             <input
               type="checkbox"
               checked={overdueOnly}
-              onChange={(e) => setOverdueOnly(e.target.checked)}
+              onChange={(e) => {
+                setPage(1);
+                setOverdueOnly(e.target.checked);
+              }}
             />
             Overdue only
           </label>
@@ -175,7 +202,10 @@ export default function GovComplaints() {
           {/* Priority Filter */}
           <select
             value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
+            onChange={(e) => {
+              setPage(1);
+              setPriorityFilter(e.target.value);
+            }}
             className="input py-2 text-xs w-auto capitalize"
           >
             <option value="">All Priorities</option>
@@ -215,7 +245,7 @@ export default function GovComplaints() {
               {loading ? (
                 <tr>
                   <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
-                    Loading department complaints...
+                    Loading organization complaints...
                   </td>
                 </tr>
               ) : complaints.length === 0 ? (
@@ -254,7 +284,7 @@ export default function GovComplaints() {
                     </td>
                     <td className="py-3.5 px-4">
                       <span className="text-xs font-semibold text-blue-600 hover:underline">
-                        Process →
+                        {c.can_process ? "Process" : "View details"} →
                       </span>
                     </td>
                   </tr>
@@ -262,6 +292,31 @@ export default function GovComplaints() {
               )}
             </tbody>
           </table>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
+          <span>
+            Showing {totalComplaints === 0 ? 0 : (page - 1) * 50 + 1}–
+            {Math.min(page * 50, totalComplaints)} of {totalComplaints} complaints
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+              disabled={page === 1 || loading}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span>Page {page} of {Math.max(1, Math.ceil(totalComplaints / 50))}</span>
+            <button
+              type="button"
+              onClick={() => setPage((currentPage) => currentPage + 1)}
+              disabled={loading || page >= Math.ceil(totalComplaints / 50)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 font-semibold disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
     </div>

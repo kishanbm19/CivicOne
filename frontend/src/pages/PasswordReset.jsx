@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Mail, Lock, AlertCircle, CheckCircle2 } from "lucide-react";
 import Logo from "../components/common/Logo";

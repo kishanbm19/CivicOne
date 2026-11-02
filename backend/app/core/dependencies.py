@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .database import get_db
 from .security import decode_access_token
-from ..models import User, DepartmentMembership, Department
+from ..models import User, DepartmentMembership, Department, Organization
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -17,6 +17,10 @@ def current_user(cred: HTTPAuthorizationCredentials | None = Depends(bearer), db
     user = db.get(User, uid)
     if not user or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User account is inactive or not found")
+    if user.role == "org_admin" and (
+        not user.organization_id or not db.get(Organization, user.organization_id)
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization administrator is not assigned to a valid organization")
     return user
 
 def require_citizen(user: User = Depends(current_user)) -> User:
@@ -25,13 +29,8 @@ def require_citizen(user: User = Depends(current_user)) -> User:
     return user
 
 def staff_user(user: User = Depends(current_user)) -> User:
-    if user.role not in ("staff", "dept_admin", "platform_admin"):
+    if user.role not in ("staff", "org_admin", "platform_admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Government staff credentials required")
-    return user
-
-def dept_admin_user(user: User = Depends(current_user)) -> User:
-    if user.role not in ("dept_admin", "platform_admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Department administrator privileges required")
     return user
 
 def platform_admin_user(user: User = Depends(current_user)) -> User:
@@ -45,6 +44,15 @@ def authorized_department_ids(db: Session, user: User) -> set[str]:
         # Platform admin has access across all departments
         all_ids = db.scalars(select(Department.id)).all()
         return set(all_ids)
+    if user.role == "org_admin":
+        if not user.organization_id:
+            return set()
+        department_ids = db.scalars(
+            select(Department.id).where(
+                Department.organization_id == user.organization_id
+            )
+        ).all()
+        return set(department_ids)
     return active_department_membership_ids(db, user)
 
 def active_department_membership_ids(db: Session, user: User) -> set[str]:
@@ -52,18 +60,28 @@ def active_department_membership_ids(db: Session, user: User) -> set[str]:
     rows = db.scalars(
         select(DepartmentMembership.department_id).where(
             DepartmentMembership.user_id == user.id,
-            DepartmentMembership.is_active.is_(True)
+            DepartmentMembership.is_active.is_(True),
+            User.is_active.is_(True),
         )
+        .join(User, User.id == DepartmentMembership.user_id)
     ).all()
     return set(rows)
 
 def department_role(db: Session, user: User, department_id: str) -> str | None:
     if user.role == "platform_admin":
         return "platform_admin"
+    if user.role == "org_admin":
+        if not user.organization_id:
+            return None
+        matching_department = db.scalar(
+            select(Department.id).where(
+                Department.id == department_id,
+                Department.organization_id == user.organization_id,
+            )
+        )
+        return "organization_admin" if matching_department else None
     if department_id not in authorized_department_ids(db, user):
         return None
-    if user.role == "dept_admin":
-        return "department_admin"
     return db.scalar(
         select(DepartmentMembership.role_in_dept).where(
             DepartmentMembership.user_id == user.id,
@@ -74,23 +92,12 @@ def department_role(db: Session, user: User, department_id: str) -> str | None:
 
 def can_manage_department(db: Session, user: User, department_id: str) -> bool:
     return department_role(db, user, department_id) in {
-        "platform_admin", "department_admin", "dept_admin", "admin", "supervisor", "lead"
+        "platform_admin", "organization_admin", "department_admin", "admin",
+        "supervisor", "lead"
     }
 
 def can_publish_for_department(db: Session, user: User, department_id: str) -> bool:
     return department_role(db, user, department_id) in {
-        "platform_admin", "department_admin", "dept_admin", "admin",
+        "platform_admin", "organization_admin", "department_admin", "admin",
         "public_information_officer", "information_officer"
     }
-
-def authorized_organization_ids(db: Session, user: User) -> set[str]:
-    """Returns set of organization IDs the user is authorized to access."""
-    if user.role == "platform_admin":
-        return set()
-    dept_ids = authorized_department_ids(db, user)
-    if not dept_ids:
-        return set()
-    org_ids = db.scalars(
-        select(Department.organization_id).where(Department.id.in_(dept_ids))
-    ).all()
-    return set(org_ids)

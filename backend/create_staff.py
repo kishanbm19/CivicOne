@@ -11,7 +11,6 @@ Usage:
   Initial CivicOne accounts (passwords are prompted without echo):
     python create_staff.py --provision-initial-accounts
 """
-import sys
 import argparse
 import getpass
 from sqlalchemy import select
@@ -200,10 +199,26 @@ def ensure_department(db, domain_key: str):
         db.flush()
     return dept
 
+def ensure_organization(db, domain_key: str):
+    info = DOMAINS[domain_key]
+    org = db.scalar(select(Organization).where(Organization.domain == domain_key))
+    if not org:
+        org = Organization(
+            name=info["org_name"],
+            domain=domain_key,
+            description=f"CivicOne {info['org_name']}",
+        )
+        db.add(org)
+        db.flush()
+    return org
+
 def create_staff(email: str, password: str, full_name: str, role: str = "staff", domain: str = "transport"):
     Base.metadata.create_all(engine)
     with SessionLocal() as db:
         email = email.strip().lower()
+        if domain not in DOMAINS and role in ("staff", "org_admin"):
+            domain = "transport"
+        organization = ensure_organization(db, domain) if role == "org_admin" else None
         existing = db.scalar(select(User).where(User.email == email))
         if existing:
             print(f"[!] A user with email '{email}' already exists (Current role: {existing.role}).")
@@ -212,6 +227,7 @@ def create_staff(email: str, password: str, full_name: str, role: str = "staff",
                 existing.password_hash = hash_password(password)
                 existing.role = role
                 existing.full_name = full_name
+                existing.organization_id = organization.id if organization else None
                 db.commit()
                 print(f"[✓] User '{email}' successfully updated.")
             return
@@ -221,31 +237,31 @@ def create_staff(email: str, password: str, full_name: str, role: str = "staff",
             password_hash=hash_password(password),
             full_name=full_name,
             role=role,
+            organization_id=organization.id if organization else None,
             is_active=True
         )
         db.add(user)
         db.flush()
 
-        # If staff or dept_admin, attach department membership
-        if role in ("staff", "dept_admin"):
-            if domain not in DOMAINS:
-                domain = "transport"
+        if role == "staff":
             dept = ensure_department(db, domain)
             membership = DepartmentMembership(
                 user_id=user.id,
                 department_id=dept.id,
-                role_in_dept="lead" if role == "dept_admin" else "staff",
+                role_in_dept="staff",
                 is_active=True
             )
             db.add(membership)
             print(f"[✓] Assigned to Department: '{dept.name}' ({DOMAINS[domain]['org_name']})")
+        elif role == "org_admin":
+            print(f"[✓] Assigned as administrator of: '{organization.name}'")
 
         db.commit()
         print(f"\n[✓] Successfully created government account:")
         print(f"    - Full Name: {full_name}")
         print(f"    - Email:     {email}")
         print(f"    - Role:      {role}")
-        if role in ("staff", "dept_admin"):
+        if role in ("staff", "org_admin"):
             print(f"    - Domain:    {domain}")
         print(f"    - Portal:    http://localhost:5173/government/login\n")
 
@@ -283,7 +299,7 @@ def main():
     parser.add_argument("--email", help="Account email address")
     parser.add_argument("--password", help="Account password (min 8 characters)")
     parser.add_argument("--name", help="Full name of staff member / admin")
-    parser.add_argument("--role", choices=["staff", "dept_admin", "platform_admin"], default="staff", help="Role type")
+    parser.add_argument("--role", choices=["staff", "org_admin", "platform_admin"], default="staff", help="Role type")
     parser.add_argument("--domain", choices=["transport", "municipal", "healthcare"], default="transport", help="Department domain")
     parser.add_argument("--delete", help="Delete an account by email address")
     parser.add_argument("--list", action="store_true", help="List all accounts in the database")
@@ -332,16 +348,16 @@ def main():
             full_name = "Government Staff"
 
         print("\nSelect Role:")
-        print("  1. Department Staff (handles complaints for a specific department)")
-        print("  2. Department Administrator (manages departmental notices and staff)")
+        print("  1. Department Staff (handles complaints for assigned departments)")
+        print("  2. Organization Administrator (manages the entire organization)")
         print("  3. Platform Administrator (full system access)")
         role_choice = input("Choice [1/2/3, default: 1]: ").strip()
-        role_map = {"1": "staff", "2": "dept_admin", "3": "platform_admin"}
+        role_map = {"1": "staff", "2": "org_admin", "3": "platform_admin"}
         role = role_map.get(role_choice, "staff")
 
         domain = "transport"
-        if role in ("staff", "dept_admin"):
-            print("\nSelect Department Domain:")
+        if role in ("staff", "org_admin"):
+            print("\nSelect Organization:")
             print("  1. Transport Services (Bus operations, delays, shelters)")
             print("  2. Municipal Services (Sanitation, waste, potholes, streetlights)")
             print("  3. Healthcare Services (Clinics, facilities, appointments)")

@@ -1,6 +1,6 @@
-import React from "react";
+
 import { Link } from "react-router-dom";
-import { Shield, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
 export default function Logo({ light = false, linkTo = "/", showTag = false, departmentTag = null }) {
   return (

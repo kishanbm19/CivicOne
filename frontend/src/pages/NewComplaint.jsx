@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bus,
@@ -12,7 +12,6 @@ import {
   ArrowLeft,
   Sparkles,
   ShieldAlert,
-  Info
 } from "lucide-react";
 import { createComplaint, uploadComplaintImage } from "../services/complaints";
 import { errMsg } from "../services/axios";
@@ -22,10 +21,13 @@ export default function NewComplaint() {
   const [searchParams] = useSearchParams();
 
   const [step, setStep] = useState(1);
-  const [domain, setDomain] = useState(searchParams.get("domain") || "transport");
+  const [organizations, setOrganizations] = useState([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [organizationsLoading, setOrganizationsLoading] = useState(true);
+  const [organizationError, setOrganizationError] = useState(null);
   const [title, setTitle] = useState(searchParams.get("prefill") || "");
-  const [category, setCategory] = useState(searchParams.get("category") || "general");
   const [description, setDescription] = useState("");
+  const selectedOrganization = organizations.find((item) => item.id === organizationId);
 
   // Step 2: Address (Strictly manual - no GPS/geolocation APIs)
   const [address, setAddress] = useState("");
@@ -38,35 +40,16 @@ export default function NewComplaint() {
   const [submitting, setSubmitting] = useState(false);
   const [successResult, setSuccessResult] = useState(null);
 
-  // Category choices per domain
-  const CATEGORIES = {
-    transport: [
-      { key: "bus_delay", label: "Bus Delay & Frequency" },
-      { key: "bus_stop_damage", label: "Damaged Bus Stop / Shelter" },
-      { key: "general", label: "Transit Infrastructure / Overcrowding" },
-    ],
-    municipal: [
-      { key: "garbage", label: "Garbage & Waste Collection" },
-      { key: "pothole", label: "Pothole & Damaged Road" },
-      { key: "streetlight", label: "Faulty Streetlight" },
-      { key: "water_supply", label: "Water Supply Interruption" },
-      { key: "drainage", label: "Blocked Drainage & Sewage" },
-      { key: "general", label: "General Municipal Issue" },
-    ],
-    healthcare: [
-      { key: "facility_cleanliness", label: "Cleanliness & Sanitation" },
-      { key: "equipment", label: "Non-functional Medical Equipment" },
-      { key: "general", label: "Staff Availability / Wait Times" },
-    ],
-  };
-
   useEffect(() => {
-    // If domain changes, ensure category is reset if not valid
-    const validCats = CATEGORIES[domain]?.map((c) => c.key) || [];
-    if (!validCats.includes(category)) {
-      setCategory(validCats[0] || "general");
-    }
-  }, [domain]);
+    listComplaintOrganizations()
+      .then((items) => {
+        setOrganizations(items || []);
+        const preferred = items?.find((item) => item.domain === searchParams.get("domain"));
+        setOrganizationId(preferred?.id || items?.[0]?.id || "");
+      })
+      .catch((err) => setOrganizationError(errMsg(err)))
+      .finally(() => setOrganizationsLoading(false));
+  }, [searchParams]);
 
   const handleImageChange = async (e) => {
     const file = e.target.files?.[0];
@@ -77,6 +60,10 @@ export default function NewComplaint() {
   };
 
   const validateStep1 = () => {
+    if (!organizationId) {
+      setError("Please select an organization.");
+      return false;
+    }
     if (title.trim().length < 5) {
       setError("Please enter a descriptive title (at least 5 characters).");
       return false;
@@ -108,10 +95,9 @@ export default function NewComplaint() {
     setSubmitting(true);
     try {
       const res = await createComplaint({
-        domain,
+        organization_id: organizationId,
         title,
         description,
-        category,
         address,
         locality: locality || undefined,
       });
@@ -146,24 +132,24 @@ export default function NewComplaint() {
               Complaint Registered
             </h2>
             <p className="mt-2 text-xs sm:text-sm text-slate-500">
-              Your issue has been routed with reference ID:
+              {successResult.department_name
+                ? `Your complaint was submitted and routed to ${successResult.department_name}${successResult.needs_review ? " for review." : "."}`
+                : "Your complaint was submitted successfully. Department assignment is pending review."}
             </p>
             <p className="mt-2 text-2xl font-mono font-black text-blue-600 tracking-wider bg-slate-50 py-2.5 px-6 rounded-2xl border border-slate-200 inline-block">
               {successResult.reference}
             </p>
           </div>
 
-          <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-left text-xs text-blue-900 space-y-1">
+          <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-left text-xs text-blue-900">
             <p className="font-bold flex items-center gap-1.5">
               <Sparkles size={14} className="text-blue-600" />
-              AI Routing Status:
+              {successResult.department_name
+                ? successResult.needs_review
+                  ? `Awaiting review by ${successResult.department_name}`
+                  : `Routed to ${successResult.department_name}`
+                : "Department assignment pending review"}
             </p>
-            <p>
-              Classified as: <span className="font-semibold">{successResult.category?.replace("_", " ")}</span> ({successResult.priority?.toUpperCase()} priority)
-            </p>
-            {successResult.department_name && (
-              <p>Assigned Department: <span className="font-semibold">{successResult.department_name}</span></p>
-            )}
           </div>
 
           {attachmentError && (
@@ -239,36 +225,41 @@ export default function NewComplaint() {
       {/* Step 1: Details */}
       {step === 1 && (
         <div className="card p-6 sm:p-8 border border-slate-200 space-y-6">
-          {/* Domain Selection */}
+          {/* Organization Selection */}
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-2">
-              Select Service Domain
+              Select Organization
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {[
-                { key: "transport", label: "Transport Services", icon: Bus, activeBorder: "border-blue-500 bg-blue-50/60 text-blue-900" },
-                { key: "municipal", label: "Municipal Services", icon: Building2, activeBorder: "border-emerald-500 bg-emerald-50/60 text-emerald-900" },
-                { key: "healthcare", label: "Healthcare Services", icon: HeartPulse, activeBorder: "border-rose-500 bg-rose-50/60 text-rose-900" },
-              ].map((item) => {
-                const Icon = item.icon;
-                const isSelected = domain === item.key;
+              {organizations.map((item) => {
+                const Icon = item.domain === "transport"
+                  ? Bus
+                  : item.domain === "healthcare" ? HeartPulse : Building2;
+                const activeBorder = item.domain === "transport"
+                  ? "border-blue-500 bg-blue-50/60 text-blue-900"
+                  : item.domain === "healthcare"
+                    ? "border-rose-500 bg-rose-50/60 text-rose-900"
+                    : "border-emerald-500 bg-emerald-50/60 text-emerald-900";
+                const isSelected = organizationId === item.id;
                 return (
                   <button
-                    key={item.key}
+                    key={item.id}
                     type="button"
-                    onClick={() => setDomain(item.key)}
+                    onClick={() => setOrganizationId(item.id)}
                     className={`p-4 rounded-2xl border text-left flex items-center gap-3 transition-all ${
                       isSelected
-                        ? `${item.activeBorder} ring-2 ring-blue-500/20 font-bold shadow-sm`
+                        ? `${activeBorder} ring-2 ring-blue-500/20 font-bold shadow-sm`
                         : "border-slate-200 hover:border-slate-300 bg-white text-slate-700"
                     }`}
                   >
                     <Icon size={20} className={isSelected ? "text-blue-600" : "text-slate-500"} />
-                    <span className="text-xs font-semibold">{item.label}</span>
+                    <span className="text-xs font-semibold">{item.name}</span>
                   </button>
                 );
               })}
             </div>
+            {organizationsLoading && <p className="text-xs text-slate-500">Loading organizations...</p>}
+            {organizationError && <p role="alert" className="text-xs text-rose-700">{organizationError}</p>}
           </div>
 
           {/* Title */}
@@ -284,24 +275,6 @@ export default function NewComplaint() {
               placeholder="e.g. Bus delay on Route 45 or Pothole on MG Road"
               className="input"
             />
-          </div>
-
-          {/* Category */}
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">
-              Issue Category
-            </label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="input capitalize"
-            >
-              {(CATEGORIES[domain] || []).map((cat) => (
-                <option key={cat.key} value={cat.key}>
-                  {cat.label}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* Description */}
@@ -427,7 +400,7 @@ export default function NewComplaint() {
             <div>
             <p className="text-xs font-bold text-blue-900">Complaint classification and routing</p>
               <p className="text-xs text-blue-800 mt-0.5 leading-relaxed">
-              CivicOne will classify your report and route it to a matching department where possible. Uncertain or unassigned cases are sent for staff review. If the optional AI service is unavailable, rule-based classification is used.
+              CivicOne will classify your report and route it to a department in the selected organization. If classification is uncertain or unavailable, the complaint will remain in a review queue instead of being assigned to an unverified department.
               </p>
             </div>
           </div>
@@ -435,16 +408,12 @@ export default function NewComplaint() {
           {/* Summary Details */}
           <div className="divide-y divide-slate-100 text-xs sm:text-sm">
             <div className="py-3 flex justify-between">
-              <span className="text-slate-500 font-medium">Service Domain:</span>
-              <span className="font-bold text-slate-900 capitalize">{domain} Services</span>
+              <span className="text-slate-500 font-medium">Organization:</span>
+              <span className="font-bold text-slate-900">{selectedOrganization?.name || "Not selected"}</span>
             </div>
             <div className="py-3 flex justify-between">
               <span className="text-slate-500 font-medium">Title:</span>
               <span className="font-bold text-slate-900 text-right">{title}</span>
-            </div>
-            <div className="py-3 flex justify-between">
-              <span className="text-slate-500 font-medium">Category:</span>
-              <span className="font-semibold text-slate-800 capitalize">{category.replace("_", " ")}</span>
             </div>
             <div className="py-3 flex justify-between">
               <span className="text-slate-500 font-medium">Manual Address:</span>

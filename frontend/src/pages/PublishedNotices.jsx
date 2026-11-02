@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
-import { FileText, Calendar, Tag, Search, Filter } from "lucide-react";
-import NoticeCard from "../components/dashboard/NoticeCard";
+import { Calendar } from "lucide-react";
+
 import { listPublicDocuments } from "../services/documents";
 
 export default function PublishedNotices() {

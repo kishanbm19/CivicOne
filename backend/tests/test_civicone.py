@@ -5,18 +5,20 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.main import app
+from app.routers import complaints as complaints_router
 from app.core.database import Base, get_db
 from app.core.security import hash_password, verify_password, create_access_token
 from app.services.operations import archive_expired_announcements
+from app.services.complaint_router import route_department
 from app.models import (
     User,
     Organization,
     Department,
     DepartmentMembership,
     Complaint,
-    StatusHistory,
+    ComplaintActivity,
+    ComplaintInternalNote,
     Document,
-    ConsentGrant,
     Notification,
     AuditEvent,
     RefreshSession,
@@ -38,8 +40,30 @@ def override_get_db():
         db.close()
 
 @pytest.fixture(autouse=True)
-def setup_database():
+def setup_database(monkeypatch):
     app.dependency_overrides[get_db] = override_get_db
+    monkeypatch.setattr(
+        complaints_router,
+        "classify_complaint",
+        lambda title, description, domain, supported_categories=None: {
+            "domain": domain,
+            "category": (
+                "bus_stop_damage"
+                if (
+                    "bus stop" in f"{title} {description}".lower()
+                    and "bus_stop_damage" in (supported_categories or [])
+                )
+                else "bus_delay"
+                if domain == "transport" and "bus_delay" in (supported_categories or [])
+                else (supported_categories or ["general"])[0]
+            ),
+            "priority": "medium",
+            "confidence": 0.95,
+            "confident": True,
+            "source": "test",
+            "explanation": "Test classifier result.",
+        },
+    )
     Base.metadata.create_all(bind=test_engine)
     with TestingSessionLocal() as db:
         # Seed test org and dept
@@ -127,11 +151,15 @@ def test_public_analytics_reports_empty_database_without_demo_values():
 
 def test_public_analytics_reports_saved_complaints_by_domain():
     with TestingSessionLocal() as db:
+        organization_id = db.scalar(
+            select(Organization.id).where(Organization.domain == "transport")
+        )
         db.add_all([
             Complaint(
                 reference=f"DB-PUBLIC-{status}",
                 citizen_id="cit-001",
                 domain="transport",
+                organization_id=organization_id,
                 title="Saved public metric fixture",
                 description="Used to verify aggregate analytics.",
                 category="bus_delay",
@@ -201,6 +229,293 @@ def test_complaint_creation_and_routing():
     assert comp["reference"].startswith("#T-2024-")
     assert comp["domain"] == "transport"
     assert comp["status"] in ("assigned", "submitted")
+
+def test_complaint_submission_uses_a_valid_selected_organization():
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        organization_id = organization.id
+
+    headers = auth_headers("cit-001")
+    invalid = client.post("/api/v1/complaints", headers=headers, json={
+        "organization_id": "missing-organization",
+        "title": "Damaged transit shelter",
+        "description": "A shelter panel has been broken for several days.",
+        "address": "Central Stand",
+    })
+    assert invalid.status_code == 404
+
+    mismatched = client.post("/api/v1/complaints", headers=headers, json={
+        "organization_id": organization_id,
+        "domain": "municipal",
+        "title": "Damaged transit shelter",
+        "description": "A shelter panel has been broken for several days.",
+        "address": "Central Stand",
+    })
+    assert mismatched.status_code == 422
+
+    options = client.get("/api/v1/services/organizations")
+    assert options.status_code == 200
+    assert any(item["id"] == organization_id for item in options.json())
+
+def test_confident_classification_routes_only_inside_selected_organization(monkeypatch):
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        department = db.scalar(select(Department))
+        organization_id = organization.id
+        department_id = department.id
+
+    monkeypatch.setattr(
+        complaints_router,
+        "classify_complaint",
+        lambda *args, **kwargs: {
+            "domain": "transport",
+            "category": "bus_delay",
+            "priority": "medium",
+            "confidence": 0.94,
+            "confident": True,
+            "source": "openai",
+            "explanation": "A bus service delay was reported.",
+        },
+    )
+    response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
+        "organization_id": organization_id,
+        "title": "Bus delay on Route 45",
+        "description": "The scheduled bus did not arrive at the stop.",
+        "address": "Central Stand",
+    })
+    assert response.status_code == 201
+    assert response.json()["organization_id"] == organization_id
+    assert response.json()["department_id"] == department_id
+    assert response.json()["department_name"] == "Test Bus Ops"
+    assert "assigned_to_user_id" not in response.json()
+    with TestingSessionLocal() as db:
+        saved = db.get(Complaint, response.json()["id"])
+        assert saved.assigned_to_user_id is None
+
+def test_low_confidence_classification_stays_in_review_queue(monkeypatch):
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        organization_id = organization.id
+
+    monkeypatch.setattr(
+        complaints_router,
+        "classify_complaint",
+        lambda *args, **kwargs: {
+            "domain": "transport",
+            "category": "bus_delay",
+            "priority": "medium",
+            "confidence": 0.40,
+            "confident": False,
+            "source": "openai",
+            "explanation": "Internal classifier details.",
+            "review_reason": "Confidence below threshold.",
+        },
+    )
+    response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
+        "organization_id": organization_id,
+        "title": "Unclear transit issue",
+        "description": "An unclear issue was observed at the central stop.",
+        "address": "Central Stand",
+    })
+    assert response.status_code == 201
+    complaint = response.json()
+    assert complaint["status"] == "submitted"
+    assert complaint["needs_review"] is True
+    assert complaint["department_id"] is None
+    assert "assigned_to_user_id" not in complaint
+    assert "ai_explanation" not in complaint
+    assert "assigned_staff_name" not in complaint
+
+    staff_headers = auth_headers("stf-001")
+    staff_detail = client.get(
+        f"/api/v1/complaints/{complaint['id']}",
+        headers=staff_headers,
+    )
+    assert staff_detail.status_code == 200
+    staff_queue = client.get("/api/v1/complaints", headers=staff_headers)
+    assert complaint["id"] in {
+        item["id"] for item in staff_queue.json()["items"]
+    }
+
+    citizen_detail = client.get(
+        f"/api/v1/complaints/{complaint['id']}",
+        headers=auth_headers("cit-001"),
+    )
+    assert citizen_detail.status_code == 200
+    assert "ai_explanation" not in citizen_detail.json()
+    assert "assigned_staff_name" not in citizen_detail.json()
+    assert all(
+        item["actor_name"] == "CivicOne team"
+        for item in citizen_detail.json()["activities"]
+    )
+
+    with TestingSessionLocal() as db:
+        activities = db.scalars(
+            select(ComplaintActivity).where(
+                ComplaintActivity.complaint_id == complaint["id"],
+                ComplaintActivity.action == "classification_review_required",
+            )
+        ).all()
+        assert len(activities) == 1
+        assert "Confidence below threshold" in activities[0].summary
+        assert not activities[0].citizen_visible
+
+def test_invalid_or_unmatched_classification_is_not_routed(monkeypatch):
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        organization_id = organization.id
+    monkeypatch.setattr(
+        complaints_router,
+        "classify_complaint",
+        lambda *args, **kwargs: {
+            "category": "healthcare_equipment",
+            "priority": "low",
+            "confidence": 0.99,
+            "confident": True,
+            "source": "openai",
+            "explanation": "Invalid cross-organization category.",
+        },
+    )
+    response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
+        "organization_id": organization_id,
+        "title": "Unmatched transit issue",
+        "description": "This issue does not match any available department category.",
+        "address": "Central Stand",
+    })
+    assert response.status_code == 201
+    assert response.json()["department_id"] is None
+    assert response.json()["needs_review"] is True
+
+def test_department_router_never_routes_outside_selected_organization():
+    with TestingSessionLocal() as db:
+        selected = db.scalar(select(Organization))
+        other = Organization(name="Other Test Organization", domain="municipal")
+        db.add(other)
+        db.flush()
+        other_department = Department(
+            organization_id=other.id,
+            name="Other Bus Operations",
+            category_key="bus_delay",
+        )
+        db.add(other_department)
+        db.flush()
+        selected_department_id = db.scalar(
+            select(Department.id).where(
+                Department.organization_id == selected.id,
+                Department.category_key == "bus_delay",
+            )
+        )
+        assert route_department(db, selected.id, "bus_delay") == selected_department_id
+        assert route_department(db, other.id, "bus_delay") == other_department.id
+
+def test_ai_provider_failure_requires_manual_review(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from app.core.config import settings
+    from app.services.ai_classifier import classify_complaint
+
+    class BrokenOpenAI:
+        def __init__(self, **kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=BrokenOpenAI))
+    result = classify_complaint(
+        "Garbage collection delay",
+        "Garbage has not been collected for several days.",
+        "municipal",
+        supported_categories=["garbage"],
+    )
+    assert result["confident"] is False
+    assert result["source"] == "fallback"
+    assert "provider failed" in result["review_reason"]
+
+def test_unparseable_ai_response_requires_manual_review(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from app.core.config import settings
+    from app.services.ai_classifier import classify_complaint
+
+    class MalformedOpenAI:
+        def __init__(self, **kwargs):
+            self.chat = SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **create_kwargs: SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                message=SimpleNamespace(content="not valid JSON")
+                            )
+                        ]
+                    )
+                )
+            )
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=MalformedOpenAI))
+    result = classify_complaint(
+        "Garbage collection delay",
+        "Garbage has not been collected for several days.",
+        "municipal",
+        supported_categories=["garbage"],
+    )
+    assert result["confident"] is False
+    assert result["source"] == "fallback"
+    assert "unreadable response" in result["review_reason"]
+
+def test_inactive_staff_cannot_be_assigned_to_a_routed_complaint(monkeypatch):
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        department = db.scalar(select(Department))
+        db.add(User(
+            id="stf-inactive",
+            email="inactive-staff@test.civicone.test",
+            full_name="Inactive Staff",
+            role="staff",
+            password_hash=hash_password("Pass#1234"),
+            is_active=False,
+        ))
+        db.add(DepartmentMembership(
+            user_id="stf-inactive",
+            department_id=department.id,
+            role_in_dept="staff",
+            is_active=False,
+        ))
+        supervisor_membership = db.scalar(
+            select(DepartmentMembership).where(
+                DepartmentMembership.user_id == "stf-001"
+            )
+        )
+        supervisor_membership.role_in_dept = "supervisor"
+        organization_id = organization.id
+        department_id = department.id
+        db.commit()
+    monkeypatch.setattr(
+        complaints_router,
+        "classify_complaint",
+        lambda *args, **kwargs: {
+            "category": "bus_delay",
+            "priority": "medium",
+            "confidence": 0.94,
+            "confident": True,
+            "source": "openai",
+            "explanation": "A bus service delay was reported.",
+        },
+    )
+    complaint_response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
+        "organization_id": organization_id,
+        "title": "Bus delay on Route 45",
+        "description": "The scheduled bus did not arrive at the stop.",
+        "address": "Central Stand",
+    })
+    assert complaint_response.status_code == 201
+    assignment = client.post(
+        f"/api/v1/complaints/{complaint_response.json()['id']}/assign",
+        headers=auth_headers("stf-001"),
+        json={"department_id": department_id, "assigned_to_user_id": "stf-inactive"},
+    )
+    assert assignment.status_code == 422
 
 def test_complaint_ownership_isolation():
     headers_citizen = auth_headers("cit-001")
@@ -372,6 +687,16 @@ def test_assignment_requires_supervisor_and_notifies_citizen():
         json=assignment,
     )
     assert allowed.status_code == 200
+    citizen_detail = client.get(
+        f"/api/v1/complaints/{complaint['id']}",
+        headers=auth_headers("cit-001"),
+    )
+    assert citizen_detail.status_code == 200
+    citizen_activity = citizen_detail.json()["activities"]
+    assert "Staff Tester" not in str(citizen_activity)
+    assert "assignment_changed" not in {
+        activity["action"] for activity in citizen_activity
+    }
 
     with TestingSessionLocal() as db:
         department = db.get(Department, department_id)
@@ -382,10 +707,12 @@ def test_assignment_requires_supervisor_and_notifies_citizen():
         )
         db.add(other_department)
         db.flush()
+        other_organization = db.get(Organization, department.organization_id)
         cross_department_complaint = Complaint(
             reference="#M-2026-9901",
             citizen_id="cit-001",
-            domain="municipal",
+            domain=other_organization.domain,
+            organization_id=other_organization.id,
             title="Cross-department record",
             description="This record belongs to a department without staff membership.",
             category="roads",
@@ -397,11 +724,12 @@ def test_assignment_requires_supervisor_and_notifies_citizen():
         db.add(cross_department_complaint)
         db.commit()
         cross_department_id = cross_department_complaint.id
-    hidden = client.get(
+    visible = client.get(
         f"/api/v1/complaints/{cross_department_id}",
         headers=headers,
     )
-    assert hidden.status_code == 404
+    assert visible.status_code == 200
+    assert visible.json()["can_process"] is False
 
     with TestingSessionLocal() as db:
         citizen_notifications = db.scalars(
@@ -412,28 +740,48 @@ def test_assignment_requires_supervisor_and_notifies_citizen():
         ).all()
     assert citizen_notifications
 
-def test_sla_configuration_sets_deadlines_on_open_complaints():
-    complaint = _create_transport_complaint()
+def test_sla_configuration_preserves_existing_complaint_deadlines():
     with TestingSessionLocal() as db:
         department_id = db.scalar(select(Department.id))
 
-    response = client.put(
+    configuration = client.put(
         "/api/v1/admin/slas",
         headers=auth_headers("adm-001"),
         json={
             "department_id": department_id,
-            "category": complaint["category"],
+            "category": "bus_delay",
             "resolution_hours": 12,
         },
     )
-    assert response.status_code == 200
+    assert configuration.status_code == 200
+
+    complaint = _create_transport_complaint()
 
     detail = client.get(
         f"/api/v1/complaints/{complaint['id']}",
         headers=auth_headers("stf-001"),
     )
     assert detail.status_code == 200
-    assert detail.json()["resolution_due_at"] is not None
+    original_deadline = detail.json()["resolution_due_at"]
+    assert original_deadline is not None
+
+    update = client.put(
+        "/api/v1/admin/slas",
+        headers=auth_headers("adm-001"),
+        json={
+            "department_id": department_id,
+            "category": "bus_delay",
+            "resolution_hours": 24,
+        },
+    )
+    assert update.status_code == 200
+
+    detail_after_sla_edit = client.get(
+        f"/api/v1/complaints/{complaint['id']}",
+        headers=auth_headers("stf-001"),
+    )
+    assert detail_after_sla_edit.status_code == 200
+    assert detail_after_sla_edit.json()["resolution_due_at"] == original_deadline
 
     metrics = client.get(
         "/api/v1/analytics/department?domain=transport",
@@ -442,6 +790,107 @@ def test_sla_configuration_sets_deadlines_on_open_complaints():
     assert metrics.status_code == 200
     assert metrics.json()["total"] >= 1
     assert "announcement_stats" in metrics.json()
+
+def test_organization_admin_access_is_scoped_to_assigned_organization():
+    with TestingSessionLocal() as db:
+        organization = db.scalar(select(Organization))
+        own_department = db.scalar(select(Department))
+        other_organization = Organization(
+            name="Other Test Organization",
+            domain="municipal",
+        )
+        db.add(other_organization)
+        db.flush()
+        other_department = Department(
+            organization_id=other_organization.id,
+            name="Other Test Department",
+            category_key="roads",
+        )
+        org_admin = User(
+            id="org-admin-001",
+            email="org-admin@test.civicone.test",
+            full_name="Organization Admin",
+            role="org_admin",
+            organization_id=organization.id,
+            password_hash=hash_password("Pass#1234"),
+        )
+        db.add_all([other_department, org_admin])
+        db.flush()
+        own_complaint = Complaint(
+            reference="#T-2026-9101",
+            citizen_id="cit-001",
+            domain=organization.domain,
+            organization_id=organization.id,
+            department_id=own_department.id,
+            title="Own organization complaint",
+            description="Complaint available to the organization administrator.",
+            category=own_department.category_key,
+            address="Test address",
+            status="assigned",
+        )
+        other_complaint = Complaint(
+            reference="#M-2026-9102",
+            citizen_id="cit-001",
+            domain=other_organization.domain,
+            organization_id=other_organization.id,
+            department_id=other_department.id,
+            title="Other organization complaint",
+            description="Complaint outside the organization administrator scope.",
+            category=other_department.category_key,
+            address="Test address",
+            status="assigned",
+        )
+        db.add_all([own_complaint, other_complaint])
+        db.commit()
+        own_organization_id = organization.id
+        other_organization_id = other_organization.id
+        own_complaint_id = own_complaint.id
+        other_complaint_id = other_complaint.id
+
+    headers = auth_headers("org-admin-001")
+    organization_list = client.get("/api/v1/admin/organizations", headers=headers)
+    assert organization_list.status_code == 200
+    assert [item["id"] for item in organization_list.json()] == [own_organization_id]
+
+    department_list = client.get("/api/v1/admin/departments", headers=headers)
+    assert department_list.status_code == 200
+    assert all(
+        item["organization_id"] == own_organization_id
+        for item in department_list.json()
+    )
+    staff_profile = client.get("/api/v1/staff/me", headers=headers)
+    assert staff_profile.status_code == 200
+    assert staff_profile.json()["permissions"]["can_manage_staff"] is True
+    assert {item["id"] for item in staff_profile.json()["departments"]} == {
+        item["id"] for item in department_list.json()
+    }
+
+    complaint_list = client.get("/api/v1/complaints", headers=headers)
+    assert complaint_list.status_code == 200
+    assert own_complaint_id in {item["id"] for item in complaint_list.json()["items"]}
+    assert other_complaint_id not in {item["id"] for item in complaint_list.json()["items"]}
+
+    other_org_department = client.post(
+        "/api/v1/admin/departments",
+        headers=headers,
+        json={
+            "organization_id": other_organization_id,
+            "name": "Unauthorized Department",
+            "category_key": "unauthorized",
+        },
+    )
+    assert other_org_department.status_code == 403
+
+    own_org_department = client.post(
+        "/api/v1/admin/departments",
+        headers=headers,
+        json={
+            "organization_id": own_organization_id,
+            "name": "Organization Admin Department",
+            "category_key": "org_admin_test",
+        },
+    )
+    assert own_org_department.status_code == 201
 
 def test_scheduled_announcement_targets_citizens_and_expires():
     headers_staff = auth_headers("stf-001")
@@ -484,7 +933,11 @@ def test_scheduled_announcement_targets_citizens_and_expires():
         document.scheduled_at = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
     public_result = client.get("/api/v1/documents/public?domain=municipal")
-    assert document_id in {item["id"] for item in public_result.json()["items"]}
+    assert document_id not in {item["id"] for item in public_result.json()["items"]}
+    transport_result = client.get("/api/v1/documents/public?domain=transport")
+    assert document_id in {item["id"] for item in transport_result.json()["items"]}
+    all_notices_result = client.get("/api/v1/documents/public")
+    assert document_id in {item["id"] for item in all_notices_result.json()["items"]}
     with TestingSessionLocal() as db:
         assert db.scalar(select(Notification.id).where(
             Notification.user_id == "cit-001",
@@ -607,6 +1060,28 @@ def test_resolution_remarks_and_high_priority_evidence_are_required():
     )
     assert missing_evidence.status_code == 422
 
+def test_resolution_timestamp_tracks_reopen_state():
+    complaint = _create_transport_complaint()
+    headers = auth_headers("stf-001")
+    resolved = client.post(
+        f"/api/v1/complaints/{complaint['id']}/status",
+        headers=headers,
+        json={
+            "new_status": "resolved",
+            "reason": "The reported transport issue has been fixed.",
+        },
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["resolved_at"] is not None
+
+    reopened = client.post(
+        f"/api/v1/complaints/{complaint['id']}/status",
+        headers=headers,
+        json={"new_status": "reopened", "reason": "The issue has returned."},
+    )
+    assert reopened.status_code == 200
+    assert reopened.json()["resolved_at"] is None
+
 def test_citizen_and_staff_only_api_boundaries():
     citizen = auth_headers("cit-001")
     staff = auth_headers("stf-001")
@@ -621,7 +1096,7 @@ def test_citizen_and_staff_only_api_boundaries():
     assert client.get("/api/v1/services/facilities").status_code == 200
     assert client.get("/api/v1/analytics/public").status_code == 200
 
-def test_staff_and_department_admin_are_scoped_to_active_memberships():
+def test_staff_view_organization_complaints_but_processing_stays_department_scoped():
     complaint = _create_transport_complaint()
     with TestingSessionLocal() as db:
         org = db.scalar(select(Organization))
@@ -631,11 +1106,11 @@ def test_staff_and_department_admin_are_scoped_to_active_memberships():
             name="Other Operations",
             category_key="other",
         )
-        department_admin = User(
-            id="dept-admin-1",
-            email="dept-admin@test.civicone.test",
-            full_name="Department Admin",
-            role="dept_admin",
+        department_supervisor = User(
+            id="department-supervisor-1",
+            email="department-supervisor@test.civicone.test",
+            full_name="Department Supervisor",
+            role="staff",
             password_hash=hash_password("Pass#1234"),
         )
         unrelated_complaint = Complaint(
@@ -643,16 +1118,49 @@ def test_staff_and_department_admin_are_scoped_to_active_memberships():
             reference="OTHER-DEPT-1",
             citizen_id="cit-001",
             domain="transport",
+            organization_id=org.id,
             title="Another department complaint",
             description="A complaint assigned to another department.",
             category="other",
             address="Other department street",
             department_id="dept-other",
         )
-        db.add_all([other_department, department_admin, unrelated_complaint])
+        other_org = Organization(name="Test Healthcare Org", domain="healthcare")
+        db.add(other_org)
         db.flush()
+        other_org_department = Department(
+            id="dept-other-org",
+            organization_id=other_org.id,
+            name="Other Organization Department",
+            category_key="health_facility",
+        )
+        other_org_complaint = Complaint(
+            id="complaint-other-org",
+            reference="OTHER-ORG-1",
+            citizen_id="cit-001",
+            domain="healthcare",
+            organization_id=other_org.id,
+            title="Another organization complaint",
+            description="A complaint belonging to a different organization.",
+            category="health_facility",
+            address="Other organization street",
+            department_id="dept-other-org",
+        )
+        db.add_all([
+            other_department,
+            department_supervisor,
+            unrelated_complaint,
+            other_org_department,
+            other_org_complaint,
+        ])
+        db.flush()
+        db.add(ComplaintInternalNote(
+            complaint_id=unrelated_complaint.id,
+            author_id="stf-001",
+            note="Private note from another department.",
+        ))
         db.add(DepartmentMembership(
-            user_id=department_admin.id,
+            user_id=department_supervisor.id,
             department_id=db.scalar(select(Department.id).where(Department.id != "dept-other")),
             role_in_dept="staff",
             is_active=True,
@@ -660,36 +1168,66 @@ def test_staff_and_department_admin_are_scoped_to_active_memberships():
         db.commit()
 
     staff_headers = auth_headers("stf-001")
-    assert client.get(
+    cross_department_detail = client.get(
         "/api/v1/complaints/complaint-other", headers=staff_headers
-    ).status_code == 404
+    )
+    assert cross_department_detail.status_code == 200
+    assert cross_department_detail.json()["can_process"] is False
+    assert cross_department_detail.json()["internal_notes"] == []
     staff_list = client.get("/api/v1/complaints", headers=staff_headers).json()
-    assert "complaint-other" not in {item["id"] for item in staff_list["items"]}
-
-    department_admin_headers = auth_headers("dept-admin-1")
+    staff_complaint_ids = {item["id"] for item in staff_list["items"]}
+    assert complaint["id"] in staff_complaint_ids
+    assert "complaint-other" in staff_complaint_ids
+    assert "complaint-other-org" not in staff_complaint_ids
     assert client.get(
-        f"/api/v1/complaints/{complaint['id']}", headers=department_admin_headers
-    ).status_code == 200
-    assert client.get(
-        "/api/v1/complaints/complaint-other", headers=department_admin_headers
+        "/api/v1/complaints/complaint-other-org", headers=staff_headers
     ).status_code == 404
-    department_admin_list = client.get(
-        "/api/v1/complaints", headers=department_admin_headers
-    ).json()
-    assert {item["id"] for item in department_admin_list["items"]} == {complaint["id"]}
+    assert client.post(
+        "/api/v1/complaints/complaint-other/status",
+        headers=staff_headers,
+        json={"new_status": "resolved", "reason": "Resolved by unrelated department."},
+    ).status_code == 403
+    assert client.post(
+        "/api/v1/complaints/complaint-other/notes",
+        headers=staff_headers,
+        json={"note": "Attempt to add an unauthorized note."},
+    ).status_code == 403
 
-    no_membership_admin_id = "dept-admin-no-membership"
-    no_membership_admin = User(
-        id=no_membership_admin_id,
-        email="dept-admin-no-membership@test.civicone.test",
-        full_name="Unassigned Department Admin",
-        role="dept_admin",
+    department_supervisor_headers = auth_headers("department-supervisor-1")
+    assert client.get(
+        f"/api/v1/complaints/{complaint['id']}", headers=department_supervisor_headers
+    ).status_code == 200
+    same_org_complaint = client.get(
+        "/api/v1/complaints/complaint-other", headers=department_supervisor_headers
+    )
+    assert same_org_complaint.status_code == 200
+    assert same_org_complaint.json()["can_process"] is False
+    department_supervisor_list = client.get(
+        "/api/v1/complaints", headers=department_supervisor_headers
+    ).json()
+    assert {item["id"] for item in department_supervisor_list["items"]} == {
+        complaint["id"],
+        "complaint-other",
+    }
+
+    no_membership_staff_id = "staff-no-membership"
+    no_membership_staff = User(
+        id=no_membership_staff_id,
+        email="staff-no-membership@test.civicone.test",
+        full_name="Unassigned Staff",
+        role="staff",
         password_hash=hash_password("Pass#1234"),
     )
     with TestingSessionLocal() as db:
-        db.add(no_membership_admin)
+        db.add(no_membership_staff)
         db.commit()
-    no_membership_headers = auth_headers(no_membership_admin_id)
+    no_membership_headers = auth_headers(no_membership_staff_id)
+    no_membership_profile = client.get(
+        "/api/v1/staff/me", headers=no_membership_headers
+    )
+    assert no_membership_profile.status_code == 200
+    assert no_membership_profile.json()["permissions"]["can_manage_staff"] is False
+    assert no_membership_profile.json()["permissions"]["can_assign"] is False
     assert client.get(
         f"/api/v1/complaints/{complaint['id']}", headers=no_membership_headers
     ).status_code == 404

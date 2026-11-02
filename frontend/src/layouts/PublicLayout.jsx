@@ -1,7 +1,7 @@
-import React from "react";
+
 import { Outlet } from "react-router-dom";
 import PublicNavbar from "../components/navigation/PublicNavbar";
-import { ShieldCheck, Heart, Sparkles } from "lucide-react";
+import { ShieldCheck, Sparkles } from "lucide-react";
 
 export default function PublicLayout() {
   return (

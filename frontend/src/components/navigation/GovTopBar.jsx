@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Search, Bell, ChevronDown, Building, Shield } from "lucide-react";
+import { useState } from "react";
+import { Search, Bell, ChevronDown, Building } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
 export default function GovTopBar({ onSearch = null, domain = "transport", currentDepartment = null, onSelectDepartment = null }) {
@@ -20,6 +20,14 @@ export default function GovTopBar({ onSearch = null, domain = "transport", curre
     : "Municipal Staff";
 
   const departments = staffProfile?.departments || [];
+  const organization = departments.find(
+    (department) => department.organization_domain === domain
+  );
+  const roleLabel = user?.role === "platform_admin"
+    ? "Platform Administrator"
+    : user?.role === "org_admin"
+      ? "Organization Administrator"
+      : staffRoleLabel;
 
   return (
     <header className="h-16 bg-white border-b border-slate-200/80 px-6 flex items-center justify-between shadow-subtle sticky top-0 z-20">
@@ -88,7 +96,12 @@ export default function GovTopBar({ onSearch = null, domain = "transport", curre
               {user?.full_name || "Staff Member"}
             </p>
             <p className="text-[11px] font-medium text-slate-500">
-              {user?.role === "platform_admin" ? "Platform Administrator" : staffRoleLabel}
+              {roleLabel}
+              {organization?.organization_name && user?.role === "org_admin" && (
+                <span className="block text-[10px] font-medium text-slate-400">
+                  {organization.organization_name}
+                </span>
+              )}
             </p>
           </div>
           <div className="grid h-9 w-9 place-items-center rounded-full bg-slate-900 text-white font-bold text-sm shadow-sm ring-2 ring-slate-100">

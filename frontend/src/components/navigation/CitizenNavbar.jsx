@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Bell, User, LogOut, ChevronDown, CheckCircle, ExternalLink, Shield } from "lucide-react";
+import { Bell, User, LogOut, ChevronDown, Shield } from "lucide-react";
 import Logo from "../common/Logo";
 import { useAuth } from "../../context/AuthContext";
 import { listNotifications, markNotificationRead, markAllNotificationsRead } from "../../services/services";

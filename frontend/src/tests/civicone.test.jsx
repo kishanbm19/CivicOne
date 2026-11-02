@@ -1,15 +1,20 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
-import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
+
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
-import StatusBadge from "../components/common/StatusBadge";
+import StatusBadge, {
+  COMPLAINT_STATUSES,
+  COMPLAINT_STATUS_TRANSITIONS,
+} from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import NoticeCard from "../components/dashboard/NoticeCard";
 import StatCard from "../components/dashboard/StatCard";
 import { Unauthorized, NotFound } from "../pages/Misc";
 import Logo from "../components/common/Logo";
 import GovComplaints from "../pages/GovComplaints";
+import GovDashboard from "../pages/GovDashboard";
 import Landing from "../pages/Landing";
+import CitizenDashboard from "../pages/CitizenDashboard";
 
 const complaintServiceMocks = vi.hoisted(() => ({
   listComplaints: vi.fn(),
@@ -21,12 +26,48 @@ const publicServiceMocks = vi.hoisted(() => ({
   listPublicDocuments: vi.fn(),
 }));
 
+const departmentServiceMocks = vi.hoisted(() => ({
+  getDepartmentAnalytics: vi.fn(),
+}));
+
+const documentServiceMocks = vi.hoisted(() => ({
+  listPublicDocuments: vi.fn(),
+}));
+
+const authMocks = vi.hoisted(() => ({
+  useAuth: vi.fn(),
+}));
+
 vi.mock("../services/complaints", () => complaintServiceMocks);
 vi.mock("../services", () => publicServiceMocks);
+vi.mock("../services/services", () => departmentServiceMocks);
+vi.mock("../services/documents", () => documentServiceMocks);
+vi.mock("../context/AuthContext", () => authMocks);
+vi.mock("recharts", () => ({
+  ResponsiveContainer: ({ children }) => <div>{children}</div>,
+  LineChart: () => null,
+  Line: () => null,
+  PieChart: () => null,
+  Pie: () => null,
+  Cell: () => null,
+  XAxis: () => null,
+  YAxis: () => null,
+  Tooltip: () => null,
+  CartesianGrid: () => null,
+}));
 
+afterEach(cleanup);
 beforeEach(() => {
   complaintServiceMocks.listComplaints.mockReset().mockResolvedValue({ items: [], total: 0 });
   complaintServiceMocks.listComplaintStaffOptions.mockReset().mockResolvedValue([]);
+  departmentServiceMocks.getDepartmentAnalytics.mockReset().mockResolvedValue({
+    trends: [],
+    category_distribution: [],
+  });
+  documentServiceMocks.listPublicDocuments.mockReset().mockResolvedValue({ items: [] });
+  authMocks.useAuth.mockReset().mockReturnValue({
+    user: { id: "staff-7", full_name: "Test Staff" },
+  });
   publicServiceMocks.getPublicStats.mockReset().mockResolvedValue({
     total_complaints: 0,
     issues_resolved: 0,
@@ -87,9 +128,44 @@ describe("CivicOne Design System & Components", () => {
     expect(screen.getAllByText("Municipal Services").length).toBeGreaterThan(1);
   });
 
-  it("renders status badges with formatted status keys", () => {
+  it("renders the four supported complaint statuses with friendly labels", () => {
+    const { rerender } = render(<StatusBadge status="submitted" />);
+    expect(screen.getByText("Pending")).toBeDefined();
+
+    rerender(<StatusBadge status="assigned" />);
+    expect(screen.getByText("Assigned")).toBeDefined();
+
+    rerender(<StatusBadge status="in_progress" />);
+    expect(screen.getByText("In Progress")).toBeDefined();
+
+    rerender(<StatusBadge status="resolved" />);
+    expect(screen.getByText("Resolved")).toBeDefined();
+    expect(COMPLAINT_STATUSES).toHaveLength(4);
+  });
+
+  it("does not map legacy complaint status values to an allowed status", () => {
+    render(<StatusBadge status="legacy_value" />);
+    expect(screen.getByText("Unsupported status")).toBeDefined();
+    expect(COMPLAINT_STATUSES.map(({ value }) => value)).toEqual([
+      "submitted",
+      "assigned",
+      "in_progress",
+      "resolved",
+    ]);
+  });
+
+  it("allows only forward complaint status transitions", () => {
+    expect(COMPLAINT_STATUS_TRANSITIONS).toEqual({
+      submitted: ["assigned"],
+      assigned: ["in_progress"],
+      in_progress: ["resolved"],
+      resolved: [],
+    });
+  });
+
+  it("renders status badges with user-friendly labels", () => {
     render(<StatusBadge status="in_progress" />);
-    expect(screen.getByText("in progress")).toBeDefined();
+    expect(screen.getByText("In Progress")).toBeDefined();
   });
 
   it("renders priority badge with appropriate styling", () => {
@@ -148,5 +224,83 @@ describe("CivicOne Design System & Components", () => {
     expect(screen.getByLabelText("Filter by assigned staff")).toBeDefined();
     expect(screen.getByLabelText("Created from")).toBeDefined();
     expect(screen.getByLabelText("Created through")).toBeDefined();
+  });
+
+  it("offers only valid complaint statuses in the staff filter", async () => {
+    render(
+      <MemoryRouter>
+        <GovComplaints />
+      </MemoryRouter>
+    );
+    const statusFilter = (await screen.findAllByRole("combobox"))[0];
+    const labels = Array.from(statusFilter.options, (option) => option.textContent);
+    expect(labels).toEqual([
+      "All Statuses",
+      "Pending",
+      "Assigned",
+      "In Progress",
+      "Resolved",
+    ]);
+  });
+
+  it("renders exactly five staff dashboard metrics using server-filtered counts", async () => {
+    complaintServiceMocks.listComplaints.mockImplementation((params = {}) => {
+      if (params.overdue_only) {
+        return Promise.resolve({ items: [], total: params.status === "in_progress" ? 4 : 0 });
+      }
+      const countByStatus = {
+        submitted: 8,
+        assigned: 3,
+        in_progress: 6,
+        resolved: 2,
+      };
+      return Promise.resolve({
+        items: [],
+        total: params.assigned_to_me ? 3 : (countByStatus[params.status] || 0),
+      });
+    });
+
+    render(
+      <MemoryRouter>
+        <GovDashboard />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Assigned to Me")).toBeDefined();
+    expect(screen.getByText("Pending")).toBeDefined();
+    expect(screen.getByText("In Progress")).toBeDefined();
+    expect(screen.getByText("Resolved")).toBeDefined();
+    expect(screen.getByText("Overdue")).toBeDefined();
+    expect(screen.getAllByText(/^(Pending|Assigned to Me|In Progress|Resolved|Overdue)$/)).toHaveLength(5);
+    expect(complaintServiceMocks.listComplaints).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "assigned", assigned_to_me: true })
+    );
+    expect(complaintServiceMocks.listComplaints).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "submitted", overdue_only: true })
+    );
+    expect(screen.getByText("4")).toBeDefined();
+  });
+
+  it("requests citizen complaint counts by status without submitting another user's ID", async () => {
+    complaintServiceMocks.listComplaints.mockImplementation((params = {}) =>
+      Promise.resolve({ items: [], total: params.status ? 1 : 0 })
+    );
+
+    render(
+      <MemoryRouter>
+        <CitizenDashboard />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Pending")).toBeDefined();
+    expect(screen.getByText("Assigned")).toBeDefined();
+    expect(screen.getByText("In Progress")).toBeDefined();
+    expect(screen.getByText("Resolved")).toBeDefined();
+    expect(complaintServiceMocks.listComplaints).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "submitted", size: 1 })
+    );
+    expect(complaintServiceMocks.listComplaints.mock.calls.every(
+      ([params]) => !Object.hasOwn(params, "citizen_id")
+    )).toBe(true);
   });
 });

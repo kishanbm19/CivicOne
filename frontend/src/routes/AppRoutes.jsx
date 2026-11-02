@@ -1,4 +1,4 @@
-import React from "react";
+
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
@@ -37,12 +37,16 @@ import GovAuditLogs from "../pages/GovAuditLogs";
 import { NotFound } from "../pages/Misc";
 
 const CITIZEN_ROLES = ["citizen"];
-const GOVERNMENT_ROLES = ["staff", "dept_admin", "platform_admin"];
-const OPERATIONAL_ROLES = ["staff", "dept_admin"];
-const ADMIN_ROLES = ["dept_admin", "platform_admin"];
-
-function Guard({ roles, children, government = false }) {
-  const { user, loading } = useAuth();
+const DEPARTMENT_ROLES = [
+  "staff",
+  "lead",
+  "supervisor",
+  "admin",
+  "public_information_officer",
+  "information_officer",
+];
+function Guard({ roles, children, government = false, departmentRoles = [] }) {
+  const { user, staffProfile, loading } = useAuth();
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm">
@@ -55,10 +59,19 @@ function Guard({ roles, children, government = false }) {
     return <Navigate to={government ? "/government/login" : "/login"} replace />;
   }
 
-  if (!roles.includes(user.role)) {
+  const hasDepartmentRole = user.role === "staff"
+    && staffProfile?.departments?.some((department) =>
+      departmentRoles.includes(department.role_in_dept)
+    );
+  if (!roles.includes(user.role) && !hasDepartmentRole) {
+    const hasActiveDepartment = staffProfile?.departments?.some((department) =>
+      DEPARTMENT_ROLES.includes(department.role_in_dept)
+    );
     const destination = user.role === "platform_admin"
       ? "/government/analytics"
-      : user.role === "staff" || user.role === "dept_admin"
+      : user.role === "org_admin"
+        ? "/government/dashboard"
+        : user.role === "staff" && hasActiveDepartment
         ? "/government"
         : user.role === "citizen"
           ? "/app"
@@ -118,20 +131,24 @@ export default function AppRoutes() {
       <Route
         path="/government"
         element={
-          <Guard roles={GOVERNMENT_ROLES} government>
+          <Guard
+            roles={["org_admin", "platform_admin"]}
+            departmentRoles={DEPARTMENT_ROLES}
+            government
+          >
             <GovernmentLayout />
           </Guard>
         }
       >
         <Route index element={<GovernmentIndex />} />
-        <Route path="dashboard" element={<Guard roles={OPERATIONAL_ROLES}><GovDashboard /></Guard>} />
-        <Route path="complaints" element={<Guard roles={OPERATIONAL_ROLES}><GovComplaints /></Guard>} />
-        <Route path="complaints/:id" element={<Guard roles={OPERATIONAL_ROLES}><ComplaintDetail /></Guard>} />
-        <Route path="documents" element={<Guard roles={OPERATIONAL_ROLES}><GovDocuments /></Guard>} />
-        <Route path="analytics" element={<Guard roles={GOVERNMENT_ROLES}><GovAnalytics /></Guard>} />
-        <Route path="staff" element={<Guard roles={ADMIN_ROLES}><GovStaffManagement /></Guard>} />
+        <Route path="dashboard" element={<Guard roles={["org_admin"]} departmentRoles={DEPARTMENT_ROLES}><GovDashboard /></Guard>} />
+        <Route path="complaints" element={<Guard roles={["org_admin"]} departmentRoles={DEPARTMENT_ROLES}><GovComplaints /></Guard>} />
+        <Route path="complaints/:id" element={<Guard roles={["org_admin"]} departmentRoles={DEPARTMENT_ROLES}><ComplaintDetail /></Guard>} />
+        <Route path="documents" element={<Guard roles={["org_admin"]} departmentRoles={DEPARTMENT_ROLES}><GovDocuments /></Guard>} />
+        <Route path="analytics" element={<Guard roles={["org_admin", "platform_admin"]} departmentRoles={DEPARTMENT_ROLES}><GovAnalytics /></Guard>} />
+        <Route path="staff" element={<Guard roles={["org_admin", "platform_admin"]}><GovStaffManagement /></Guard>} />
         <Route path="admin/organizations" element={<Guard roles={["platform_admin"]}><GovOrganizations /></Guard>} />
-        <Route path="audit-logs" element={<Guard roles={ADMIN_ROLES}><GovAuditLogs /></Guard>} />
+        <Route path="audit-logs" element={<Guard roles={["org_admin", "platform_admin"]}><GovAuditLogs /></Guard>} />
         <Route path="settings" element={<ProfileSettings />} />
       </Route>
 

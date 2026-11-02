@@ -1,10 +1,9 @@
 import hashlib
-import uuid
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..core.config import settings
@@ -19,7 +18,14 @@ from ..core.security import (
     decode_refresh_token
 )
 from ..core.logging import log_audit_event
-from ..models import User, DepartmentMembership, PasswordResetToken, RefreshSession, Organization, Department
+from ..models import (
+    User,
+    DepartmentMembership,
+    PasswordResetToken,
+    RefreshSession,
+    Department,
+    Organization,
+)
 from ..services.email import send_password_reset_email, EmailNotConfiguredError, EmailDeliveryError
 
 router = APIRouter(prefix="/api/v1", tags=["auth"])
@@ -119,9 +125,13 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
     # Portal isolation enforcement
-    is_staff_or_admin = u.role in ("staff", "dept_admin", "platform_admin")
-    if u.role not in ("citizen", "staff", "dept_admin", "platform_admin"):
+    is_staff_or_admin = u.role in ("staff", "org_admin", "platform_admin")
+    if u.role not in ("citizen", "staff", "org_admin", "platform_admin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Account role is not authorized for portal access")
+    if u.role == "org_admin" and (
+        not u.organization_id or not db.get(Organization, u.organization_id)
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Organization administrator is not assigned to a valid organization")
     if body.portal == "government" and not is_staff_or_admin:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -309,6 +319,30 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
             "organization_domain": org.domain if org else None
         })
 
+    if u.role == "org_admin" and u.organization_id:
+        organization = db.get(Organization, u.organization_id)
+        if organization:
+            primary_domain = organization.domain
+        organization_departments = db.scalars(
+            select(Department).where(
+                Department.organization_id == u.organization_id
+            ).order_by(Department.name)
+        ).all()
+        departments_data = [
+            {
+                "id": dept.id,
+                "name": dept.name,
+                "category_key": dept.category_key,
+                "role_in_dept": "organization_admin",
+                "organization_id": dept.organization_id,
+                "organization_name": dept.organization.name if dept.organization else None,
+                "organization_domain": dept.organization.domain if dept.organization else None,
+            }
+            for dept in organization_departments
+        ]
+        if organization_departments and organization_departments[0].organization:
+            primary_domain = organization_departments[0].organization.domain
+
     # If platform_admin and no explicit dept membership, load all
     if u.role == "platform_admin" and not departments_data:
         all_depts = db.scalars(select(Department)).all()
@@ -333,24 +367,27 @@ def staff_me(u: User = Depends(staff_user), db: Session = Depends(get_db)):
         "primary_domain": primary_domain,
         "departments": departments_data,
         "permissions": {
-            "can_assign": u.role == "platform_admin" or u.role == "dept_admin" or any(
+            "can_assign": u.role in ("platform_admin", "org_admin") or any(
                 d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
                 for d in departments_data
             ),
-            "can_publish_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+            "can_publish_documents": u.role in ("platform_admin", "org_admin") or any(
                 d["role_in_dept"] in ("department_admin", "admin", "public_information_officer", "information_officer")
                 for d in departments_data
             ),
-            "can_approve_documents": u.role == "platform_admin" or u.role == "dept_admin" or any(
+            "can_approve_documents": u.role in ("platform_admin", "org_admin") or any(
                 d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
                 for d in departments_data
             ),
-            "can_manage_staff": u.role == "platform_admin" or u.role == "dept_admin" or any(
+            "can_manage_staff": u.role in ("platform_admin", "org_admin") or any(
                 d["role_in_dept"] in ("department_admin", "admin")
                 for d in departments_data
             ),
             "can_manage_orgs": u.role == "platform_admin",
-            "can_view_audit": u.role in ("dept_admin", "platform_admin")
+            "can_view_audit": u.role in ("org_admin", "platform_admin") or any(
+                d["role_in_dept"] in ("department_admin", "admin", "supervisor", "lead")
+                for d in departments_data
+            )
         }
     }
 

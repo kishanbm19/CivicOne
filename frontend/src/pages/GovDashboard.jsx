@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useOutletContext } from "react-router-dom";
 import {
   Inbox,
@@ -33,36 +33,62 @@ export default function GovDashboard() {
   const [loadError, setLoadError] = useState("");
   const [complaints, setComplaints] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [statusCounts, setStatusCounts] = useState({
+    pending: 0,
+    assignedToMe: 0,
+    inProgress: 0,
+    resolved: 0,
+    overdue: 0,
+  });
   const departmentName = outletCtx.currentDepartment?.name;
 
   useEffect(() => {
     setLoading(true);
     setLoadError("");
+    const countComplaints = (params) =>
+      listComplaints({ domain: activeDomain, size: 1, ...params })
+        .then((response) => response.total || 0);
+
     Promise.all([
       listComplaints({ domain: activeDomain, size: 4 }),
       getDepartmentAnalytics(activeDomain),
+      countComplaints({ status: "submitted" }),
+      countComplaints({ status: "assigned", assigned_to_me: true }),
+      countComplaints({ status: "in_progress" }),
+      countComplaints({ status: "resolved" }),
+      countComplaints({ status: "submitted", overdue_only: true }),
+      countComplaints({ status: "assigned", overdue_only: true }),
+      countComplaints({ status: "in_progress", overdue_only: true }),
     ])
-      .then(([compData, statData]) => {
+      .then(([
+        compData,
+        statData,
+        pending,
+        assignedToMe,
+        inProgress,
+        resolved,
+        overdueSubmitted,
+        overdueAssigned,
+        overdueInProgress,
+      ]) => {
         setComplaints(compData.items || []);
         setAnalytics(statData);
+        setStatusCounts({
+          pending,
+          assignedToMe,
+          inProgress,
+          resolved,
+          overdue: overdueSubmitted + overdueAssigned + overdueInProgress,
+        });
       })
       .catch((err) => {
         console.error("Dashboard data load error:", err);
         setLoadError("Dashboard information could not be loaded. Please try again later.");
       })
       .finally(() => setLoading(false));
-  }, [activeDomain]);
+  }, [activeDomain, user?.id]);
 
-  const stats = analytics || {
-    total: 0,
-    pending: 0,
-    assigned_to_me: 0,
-    in_progress: 0,
-    resolved: 0,
-    overdue: 0,
-    trends: [],
-    category_distribution: [],
-  };
+  const stats = analytics || { trends: [], category_distribution: [] };
   const metricValue = (value) => (loading ? "…" : loadError ? "—" : value);
 
   return (
@@ -91,40 +117,34 @@ export default function GovDashboard() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4 sm:gap-6">
-        <StatCard
-          title="Total Complaints"
-          value={metricValue(stats.total)}
-          icon={Inbox}
-          color="blue"
-        />
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
         <StatCard
           title="Pending"
-          value={metricValue(stats.pending)}
+          value={metricValue(statusCounts.pending)}
           icon={Clock}
           color="amber"
         />
         <StatCard
           title="Assigned to Me"
-          value={metricValue(stats.assigned_to_me)}
+          value={metricValue(statusCounts.assignedToMe)}
           icon={Inbox}
           color="blue"
         />
         <StatCard
           title="In Progress"
-          value={metricValue(stats.in_progress)}
+          value={metricValue(statusCounts.inProgress)}
           icon={Clock}
           color="amber"
         />
         <StatCard
           title="Resolved"
-          value={metricValue(stats.resolved)}
+          value={metricValue(statusCounts.resolved)}
           icon={CheckCircle2}
           color="green"
         />
         <StatCard
           title="Overdue"
-          value={metricValue(stats.overdue)}
+          value={metricValue(statusCounts.overdue)}
           icon={AlertOctagon}
           color="red"
         />
@@ -132,7 +152,7 @@ export default function GovDashboard() {
 
       <ComplaintTable
         complaints={complaints}
-        title="Recent Department Complaints"
+        title="Recent Organization Complaints"
         viewAllLink={activeDomain ? `/government/complaints?domain=${activeDomain}` : "/government/complaints"}
       />
 

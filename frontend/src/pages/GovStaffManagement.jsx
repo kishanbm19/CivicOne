@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from "react";
-import { Users, UserPlus, Shield, CheckCircle2, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { UserPlus, CheckCircle2, AlertCircle } from "lucide-react";
 import { listStaff, provisionStaff, listDepartments, updateStaffMembership } from "../services/services";
 import { errMsg } from "../services/axios";
 import { useAuth } from "../context/AuthContext";
 
 export default function GovStaffManagement() {
-  const { staffProfile } = useAuth();
-  const canManageStaff = staffProfile?.permissions?.can_manage_staff;
+  const { user } = useAuth();
+  const canManageStaff = ["org_admin", "platform_admin"].includes(user?.role);
   const [staff, setStaff] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +68,7 @@ export default function GovStaffManagement() {
         full_name: fullName,
         email,
         password,
-        role: roleInDept === "department_admin" ? "dept_admin" : "staff",
+        role: "staff",
         department_id: deptId,
         role_in_dept: roleInDept,
       });
@@ -134,6 +134,7 @@ export default function GovStaffManagement() {
                 <th className="py-3 px-4">Staff Member</th>
                 <th className="py-3 px-4">Email</th>
                 <th className="py-3 px-4">Assigned Department</th>
+                <th className="py-3 px-4">Organization</th>
                 <th className="py-3 px-4">Domain</th>
                 <th className="py-3 px-4">Platform Role</th>
                 <th className="py-3 px-4">Department Role</th>
@@ -144,13 +145,13 @@ export default function GovStaffManagement() {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan="9" className="py-12 text-center text-slate-400 text-xs">
                     Loading staff memberships...
                   </td>
                 </tr>
               ) : staff.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan="9" className="py-12 text-center text-slate-400 text-xs">
                     No active staff memberships found.
                   </td>
                 </tr>
@@ -166,12 +167,19 @@ export default function GovStaffManagement() {
                     <td className="py-3.5 px-4 font-medium text-slate-800">
                       {m.department_name}
                     </td>
+                    <td className="py-3.5 px-4 text-slate-600">
+                      {departments.find((department) => department.id === m.department_id)?.organization_name || "—"}
+                    </td>
                     <td className="py-3.5 px-4 capitalize text-slate-600">
                       {m.domain || "Civic"}
                     </td>
                     <td className="py-3.5 px-4">
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 capitalize">
-                        {m.role?.replace("_", " ")}
+                        {m.role === "org_admin"
+                          ? "Organization Admin"
+                          : m.role === "platform_admin"
+                            ? "Platform Admin"
+                            : "Staff"}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
@@ -185,7 +193,6 @@ export default function GovStaffManagement() {
                       >
                         <option value="staff">Staff</option>
                         <option value="supervisor">Manager / Supervisor</option>
-                        <option value="department_admin">Department Admin</option>
                         <option value="public_information_officer">Public Information Officer</option>
                       </select>
                     </td>
@@ -282,7 +289,6 @@ export default function GovStaffManagement() {
                   <select value={roleInDept} onChange={(e) => setRoleInDept(e.target.value)} className="input" required>
                     <option value="staff">Staff</option>
                     <option value="supervisor">Manager / Supervisor</option>
-                    <option value="department_admin">Department Admin</option>
                     <option value="public_information_officer">Public Information Officer</option>
                   </select>
                 </div>

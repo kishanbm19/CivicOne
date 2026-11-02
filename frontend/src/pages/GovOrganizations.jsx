@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Layers, Plus, Building, CheckCircle2, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Plus, CheckCircle2, AlertCircle } from "lucide-react";
 import { listOrganizations, listDepartments } from "../services/services";
 import api, { errMsg } from "../services/axios";
 

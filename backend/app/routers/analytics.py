@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.dependencies import require_citizen, staff_user, authorized_department_ids, platform_admin_user
@@ -12,7 +12,6 @@ from ..models import (
     Organization,
     Document,
     AuditEvent,
-    HealthcareFacility,
     StatusHistory,
 )
 from ..services.operations import escalate_overdue_complaints

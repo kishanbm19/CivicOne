@@ -138,15 +138,21 @@ def escalate_overdue_complaints(db: Session, now: datetime | None = None) -> int
                 DepartmentMembership.department_id == complaint.department_id,
                 DepartmentMembership.is_active.is_(True),
                 User.is_active.is_(True),
-                or_(
-                    DepartmentMembership.role_in_dept.in_(
-                        ("department_admin", "admin", "supervisor", "lead")
-                    ),
-                    User.role == "dept_admin",
+                DepartmentMembership.role_in_dept.in_(
+                    ("department_admin", "admin", "supervisor", "lead")
                 ),
             )
             .distinct()
         ).all()
+        if complaint.organization_id:
+            organization_admin_ids = db.scalars(
+                select(User.id).where(
+                    User.role == "org_admin",
+                    User.organization_id == complaint.organization_id,
+                    User.is_active.is_(True),
+                )
+            ).all()
+            supervisor_ids = list(set(supervisor_ids) | set(organization_admin_ids))
         if not supervisor_ids:
             supervisor_ids = db.scalars(
                 select(User.id).where(

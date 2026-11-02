@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import field_validator
+from pydantic import Field, field_validator
 import re
 
 class Settings(BaseSettings):
@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     FRONTEND_ORIGINS: str = "http://localhost:5173"
     OPENAI_API_KEY: str = ""
+    AI_CLASSIFICATION_CONFIDENCE_THRESHOLD: float = Field(default=0.70, ge=0.0, le=1.0)
     UPLOAD_DIRECTORY: str = "../storage"
     MAX_UPLOAD_SIZE_MB: int = 5
 

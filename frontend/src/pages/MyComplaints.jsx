@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Search, Filter, Plus, ChevronRight, Bus, Building2, HeartPulse, RefreshCw } from "lucide-react";
-import StatusBadge from "../components/common/StatusBadge";
+import { Search, Plus, RefreshCw } from "lucide-react";
+import StatusBadge, { COMPLAINT_STATUSES } from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import { listComplaints } from "../services/complaints";
 
@@ -85,12 +85,9 @@ export default function MyComplaints() {
             className="input py-2 text-xs w-auto capitalize"
           >
             <option value="">All Statuses</option>
-            <option value="submitted">Submitted</option>
-            <option value="assigned">Assigned</option>
-            <option value="in_progress">In Progress</option>
-            <option value="resolved">Resolved</option>
-            <option value="closed">Closed</option>
-            <option value="reopened">Reopened</option>
+            {COMPLAINT_STATUSES.map((status) => (
+              <option key={status.value} value={status.value}>{status.label}</option>
+            ))}
           </select>
 
           <button
@@ -111,6 +108,7 @@ export default function MyComplaints() {
               <tr>
                 <th className="py-3 px-4">Reference</th>
                 <th className="py-3 px-4">Domain</th>
+                <th className="py-3 px-4">Department</th>
                 <th className="py-3 px-4">Title</th>
                 <th className="py-3 px-4">Location</th>
                 <th className="py-3 px-4">Priority</th>
@@ -122,7 +120,7 @@ export default function MyComplaints() {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {complaints.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan="9" className="py-12 text-center text-slate-400 text-xs">
                     No complaints found matching the criteria.
                   </td>
                 </tr>
@@ -138,6 +136,9 @@ export default function MyComplaints() {
                     </td>
                     <td className="py-3.5 px-4 font-semibold capitalize text-slate-600">
                       {c.domain}
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-600">
+                      {c.department_name || (c.needs_review ? "Pending review" : "Not assigned")}
                     </td>
                     <td className="py-3.5 px-4 font-semibold text-slate-900 max-w-xs truncate">
                       {c.title}

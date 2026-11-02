@@ -1,5 +1,10 @@
 import api from "./axios";
 
+export const listComplaintOrganizations = async () => {
+  const res = await api.get("/services/organizations");
+  return res.data;
+};
+
 export const listComplaints = async (params = {}) => {
   const res = await api.get("/complaints", { params });
   return res.data;
@@ -70,10 +75,5 @@ export const downloadComplaintEvidence = async (id, evidenceId) => {
   const res = await api.get(`/complaints/${id}/evidence/${evidenceId}/download`, {
     responseType: "blob",
   });
-  return res.data;
-};
-
-export const reopenComplaint = async (id, reason) => {
-  const res = await api.post(`/complaints/${id}/reopen`, { reason });
   return res.data;
 };

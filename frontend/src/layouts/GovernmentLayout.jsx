@@ -1,12 +1,11 @@
-import React, { useState } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { Outlet } from "react-router-dom";
 import GovSidebar from "../components/navigation/GovSidebar";
 import GovTopBar from "../components/navigation/GovTopBar";
 import { useAuth } from "../context/AuthContext";
 
 export default function GovernmentLayout() {
   const { staffProfile } = useAuth();
-  const navigate = useNavigate();
 
   const initialDomain =
     staffProfile?.primary_domain ||
