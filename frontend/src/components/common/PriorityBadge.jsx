@@ -1,4 +1,4 @@
-import React from "react";
+
 
 const PRIORITY_STYLES = {
   critical: "bg-red-50 text-red-700 border-red-200",

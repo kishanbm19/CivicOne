@@ -1,6 +1,6 @@
-import React from "react";
+
 import { Link } from "react-router-dom";
-import { HelpCircle, Shield, FileQuestion, ArrowRight, Bus, Building2, HeartPulse } from "lucide-react";
+import { FileQuestion } from "lucide-react";
 
 export default function HelpSupport() {
   const faqs = [

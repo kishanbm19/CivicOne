@@ -1,17 +1,6 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  HeartPulse,
-  Building,
-  Sparkles,
-  Stethoscope,
-  Heart,
-  Search,
-  ArrowRight,
-  Calendar,
-  Activity,
-  Plus
-} from "lucide-react";
+import { HeartPulse, Building, Sparkles, Stethoscope, Heart, Search, ArrowRight } from "lucide-react";
 import { HealthcareHeroIllustration } from "../components/common/HeroIllustrations";
 import NoticeCard from "../components/dashboard/NoticeCard";
 import { listPublicDocuments } from "../services/documents";

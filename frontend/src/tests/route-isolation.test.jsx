@@ -1,10 +1,10 @@
-import React from "react";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Outlet, useLocation } from "react-router-dom";
 import AppRoutes from "../routes/AppRoutes";
 
-const authState = vi.hoisted(() => ({ user: null, loading: false }));
+const authState = vi.hoisted(() => ({ user: null, staffProfile: null, loading: false }));
 
 vi.mock("../context/AuthContext", () => ({
   useAuth: () => authState,
@@ -24,6 +24,9 @@ vi.mock("../pages/CitizenDashboard", () => ({
 }));
 vi.mock("../pages/GovDashboard", () => ({
   default: () => <div>government-dashboard</div>,
+}));
+vi.mock("../pages/GovStaffManagement", () => ({
+  default: () => <div>department-staff-management</div>,
 }));
 vi.mock("../pages/GovAnalytics", () => ({
   default: () => <div>platform-analytics</div>,
@@ -51,6 +54,7 @@ function renderAt(path) {
 
 beforeEach(() => {
   authState.user = null;
+  authState.staffProfile = null;
   authState.loading = false;
   localStorage.clear();
 });
@@ -76,14 +80,53 @@ describe("portal route isolation", () => {
 
   it("allows staff into government routes", async () => {
     authState.user = { role: "staff" };
+    authState.staffProfile = {
+      departments: [{ role_in_dept: "staff" }],
+    };
     renderAt("/government/dashboard");
 
     expect(await screen.findByText("government-dashboard")).toBeDefined();
     expect(screen.getByLabelText("current route").textContent).toBe("/government/dashboard");
   });
 
+  it("allows an organization admin into organization staff management", async () => {
+    authState.user = { role: "org_admin" };
+    authState.staffProfile = {
+      departments: [{
+        role_in_dept: "organization_admin",
+        organization_name: "Transport Authority",
+      }],
+    };
+    renderAt("/government/staff");
+
+    expect(await screen.findByText("department-staff-management")).toBeDefined();
+  });
+
+  it("does not grant staff management to a regular department staff member", async () => {
+    authState.user = { role: "staff" };
+    authState.staffProfile = {
+      departments: [{ role_in_dept: "staff" }],
+    };
+    renderAt("/government/staff");
+
+    expect(await screen.findByText("government-dashboard")).toBeDefined();
+    expect(screen.getByLabelText("current route").textContent).toBe("/government/dashboard");
+  });
+
+  it("requires an active department membership for staff accounts", async () => {
+    authState.user = { role: "staff" };
+    authState.staffProfile = { departments: [] };
+    renderAt("/government/dashboard");
+
+    expect(await screen.findByText("login-page")).toBeDefined();
+    expect(screen.getByLabelText("current route").textContent).toBe("/login");
+  });
+
   it("redirects staff away from citizen routes", async () => {
     authState.user = { role: "staff" };
+    authState.staffProfile = {
+      departments: [{ role_in_dept: "staff" }],
+    };
     renderAt("/app/profile");
 
     expect(await screen.findByText("government-dashboard")).toBeDefined();
@@ -107,6 +150,9 @@ describe("portal route isolation", () => {
 
   it("does not grant citizen routes when localStorage claims the user is a citizen", async () => {
     authState.user = { role: "staff" };
+    authState.staffProfile = {
+      departments: [{ role_in_dept: "staff" }],
+    };
     localStorage.setItem("co_user", JSON.stringify({ role: "citizen" }));
     renderAt("/app");
 

@@ -1,6 +1,18 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Text, ForeignKey, Boolean, DateTime, UniqueConstraint, Integer
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .core.database import Base
 
@@ -16,14 +28,30 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(150))
-    # Roles: citizen | staff | dept_admin | platform_admin
     role: Mapped[str] = mapped_column(String(30), default="citizen", index=True)
     phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    organization_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
-    memberships: Mapped[list["DepartmentMembership"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    memberships: Mapped[list["DepartmentMembership"]] = relationship(back_populates="user")
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
+    organization: Mapped["Organization | None"] = relationship(
+        back_populates="administrators"
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('citizen', 'staff', 'org_admin', 'platform_admin')",
+            name="ck_users_role",
+        ),
+        CheckConstraint(
+            "role != 'org_admin' OR organization_id IS NOT NULL",
+            name="ck_users_org_admin_organization",
+        ),
+        Index("uq_users_email_lower", func.lower(email), unique=True),
+    )
 
 class Organization(Base):
     __tablename__ = "organizations"
@@ -33,33 +61,53 @@ class Organization(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
-    departments: Mapped[list["Department"]] = relationship(back_populates="organization", cascade="all, delete-orphan")
+    departments: Mapped[list["Department"]] = relationship(back_populates="organization")
+    administrators: Mapped[list[User]] = relationship(back_populates="organization")
+    __table_args__ = (
+        UniqueConstraint("id", "domain", name="uq_organizations_id_domain"),
+        CheckConstraint(
+            "domain IN ('transport', 'municipal', 'healthcare')",
+            name="ck_organizations_domain",
+        ),
+    )
 
 class Department(Base):
     __tablename__ = "departments"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"), index=True)
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id"))
     name: Mapped[str] = mapped_column(String(150))
     category_key: Mapped[str] = mapped_column(String(50), index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
     organization: Mapped[Organization] = relationship(back_populates="departments")
-    memberships: Mapped[list["DepartmentMembership"]] = relationship(back_populates="department", cascade="all, delete-orphan")
-    __table_args__ = (UniqueConstraint("organization_id", "name"),)
+    memberships: Mapped[list["DepartmentMembership"]] = relationship(back_populates="department")
+    __table_args__ = (
+        UniqueConstraint("organization_id", "name"),
+        UniqueConstraint("id", "organization_id", name="uq_departments_id_organization"),
+    )
 
 class DepartmentMembership(Base):
     __tablename__ = "department_memberships"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    department_id: Mapped[str] = mapped_column(
+        ForeignKey("departments.id"), index=True
+    )
     role_in_dept: Mapped[str] = mapped_column(String(30), default="staff")  # staff | lead | supervisor
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
     user: Mapped[User] = relationship(back_populates="memberships")
     department: Mapped[Department] = relationship(back_populates="memberships")
-    __table_args__ = (UniqueConstraint("user_id", "department_id"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "department_id"),
+        CheckConstraint(
+            "role_in_dept IN ('staff', 'lead', 'supervisor', 'department_admin', "
+            "'admin', 'public_information_officer', 'information_officer')",
+            name="ck_department_memberships_role",
+        ),
+    )
 
 class Complaint(Base):
     __tablename__ = "complaints"
@@ -75,6 +123,9 @@ class Complaint(Base):
     priority: Mapped[str] = mapped_column(String(15), default="medium", index=True)  # low | medium | high | critical
     # Statuses: submitted | classified | assigned | acknowledged | in_progress | on_hold | resolved | closed | reopened | rejected
     status: Mapped[str] = mapped_column(String(20), default="submitted", index=True)
+    organization_id: Mapped[str] = mapped_column(
+        ForeignKey("organizations.id"), nullable=False, index=True
+    )
     department_id: Mapped[str | None] = mapped_column(ForeignKey("departments.id"), nullable=True, index=True)
     assigned_to_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -84,17 +135,46 @@ class Complaint(Base):
     ai_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
     citizen: Mapped[User] = relationship(foreign_keys=[citizen_id])
+    organization: Mapped[Organization | None] = relationship(foreign_keys=[organization_id])
     department: Mapped[Department | None] = relationship(foreign_keys=[department_id])
     assigned_staff: Mapped[User | None] = relationship(foreign_keys=[assigned_to_user_id])
-    history: Mapped[list["StatusHistory"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="StatusHistory.created_at")
-    internal_notes: Mapped[list["ComplaintInternalNote"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintInternalNote.created_at")
-    activities: Mapped[list["ComplaintActivity"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintActivity.created_at")
-    evidence: Mapped[list["ComplaintEvidence"]] = relationship(back_populates="complaint", cascade="all, delete-orphan", order_by="ComplaintEvidence.created_at")
+    history: Mapped[list["StatusHistory"]] = relationship(back_populates="complaint", order_by="StatusHistory.created_at")
+    internal_notes: Mapped[list["ComplaintInternalNote"]] = relationship(back_populates="complaint", order_by="ComplaintInternalNote.created_at")
+    activities: Mapped[list["ComplaintActivity"]] = relationship(back_populates="complaint", order_by="ComplaintActivity.created_at")
+    evidence: Mapped[list["ComplaintEvidence"]] = relationship(back_populates="complaint", order_by="ComplaintEvidence.created_at")
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "domain"],
+            ["organizations.id", "organizations.domain"],
+            name="fk_complaints_organization_domain",
+        ),
+        ForeignKeyConstraint(
+            ["department_id", "organization_id"],
+            ["departments.id", "departments.organization_id"],
+            name="fk_complaints_department_organization",
+        ),
+        CheckConstraint(
+            "priority IN ('low', 'medium', 'high', 'critical')",
+            name="ck_complaints_priority",
+        ),
+        CheckConstraint(
+            "domain IN ('transport', 'municipal', 'healthcare')",
+            name="ck_complaints_domain",
+        ),
+        CheckConstraint(
+            "status IN ('submitted', 'classified', 'assigned', 'acknowledged', "
+            "'in_progress', 'on_hold', 'resolved', 'closed', 'reopened', 'rejected')",
+            name="ck_complaints_status",
+        ),
+        Index("ix_complaints_organization_status", "organization_id", "status"),
+        Index("ix_complaints_department_status", "department_id", "status"),
+    )
 
 class StatusHistory(Base):
     __tablename__ = "complaint_status_history"
@@ -152,14 +232,17 @@ class ComplaintEvidence(Base):
 class DepartmentSLA(Base):
     __tablename__ = "department_slas"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
-    department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"), index=True)
+    department_id: Mapped[str] = mapped_column(ForeignKey("departments.id"))
     category: Mapped[str] = mapped_column(String(50), index=True)
     resolution_hours: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
     department: Mapped[Department] = relationship()
-    __table_args__ = (UniqueConstraint("department_id", "category"),)
+    __table_args__ = (
+        UniqueConstraint("department_id", "category"),
+        CheckConstraint("resolution_hours > 0", name="ck_department_slas_resolution_hours"),
+    )
 
 class Document(Base):
     __tablename__ = "documents"
@@ -265,7 +348,7 @@ class PasswordResetToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     # Stores a SHA-256 hex digest of the raw token; the raw token is never persisted.
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column("token", String(100), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

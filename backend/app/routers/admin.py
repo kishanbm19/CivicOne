@@ -1,4 +1,3 @@
-from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, func
@@ -42,7 +41,7 @@ class StaffProvision(BaseModel):
     full_name: str = Field(min_length=2, max_length=150)
     email: str = Field(min_length=5, max_length=255, pattern=EMAIL_REGEX)
     password: str = Field(min_length=8, max_length=128)
-    role: str = Field(pattern="^(staff|dept_admin)$")
+    role: str = Field(default="staff", pattern="^staff$")
     department_id: str
     role_in_dept: str = Field(
         default="staff",
@@ -63,7 +62,9 @@ class StaffMembershipUpdate(BaseModel):
 @router.get("/organizations")
 def list_organizations(user: User = Depends(staff_user), db: Session = Depends(get_db)):
     q = select(Organization)
-    if user.role != "platform_admin":
+    if user.role == "org_admin":
+        q = q.where(Organization.id == user.organization_id)
+    elif user.role != "platform_admin":
         dept_ids = authorized_department_ids(db, user)
         q = q.where(Organization.id.in_(
             select(Department.organization_id).where(Department.id.in_(dept_ids or {"none"}))
@@ -129,12 +130,16 @@ def list_departments(user: User = Depends(staff_user), db: Session = Depends(get
 @router.post("/departments", status_code=201)
 def create_department(
     body: DepartmentCreate,
-    user: User = Depends(platform_admin_user),
+    user: User = Depends(staff_user),
     db: Session = Depends(get_db)
 ):
     org = db.get(Organization, body.organization_id)
     if not org:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    if user.role != "platform_admin" and (
+        user.role != "org_admin" or user.organization_id != org.id
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot manage departments in this organization")
 
     dept = Department(
         organization_id=body.organization_id,
@@ -165,14 +170,17 @@ def list_staff(user: User = Depends(staff_user), db: Session = Depends(get_db)):
             if can_manage_department(db, user, dept_id)
         }
     if not dept_ids and user.role != "platform_admin":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Department administrator privileges required")
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Department or organization administrator privileges required",
+        )
     members = db.scalars(
         select(DepartmentMembership)
         .where(
             DepartmentMembership.department_id.in_(dept_ids) if user.role != "platform_admin" else True
         )
         .join(User, User.id == DepartmentMembership.user_id)
-        .where(User.role.in_(("staff", "dept_admin")))
+        .where(User.role == "staff")
     ).all()
     return [
         {
@@ -206,14 +214,18 @@ def provision_staff_account(
 
     existing_u = db.scalar(select(User).where(User.email == body.email.lower()))
     if existing_u:
+        if existing_u.role != "staff":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Only an existing staff account can receive another department membership",
+            )
         u = existing_u
-        u.role = body.role
     else:
         u = User(
             email=body.email.lower(),
             full_name=body.full_name,
             password_hash=hash_password(body.password),
-            role=body.role
+            role="staff"
         )
         db.add(u)
         db.flush()
@@ -346,15 +358,6 @@ def upsert_department_sla(
             resolution_hours=body.resolution_hours,
         )
         db.add(row)
-    open_complaints = db.scalars(
-        select(Complaint).where(
-            Complaint.department_id == department.id,
-            Complaint.category == category,
-            Complaint.status.notin_(("resolved", "closed", "rejected")),
-        )
-    ).all()
-    for complaint in open_complaints:
-        complaint.resolution_due_at = complaint.created_at + timedelta(hours=body.resolution_hours)
     db.commit()
     log_audit_event(
         db,

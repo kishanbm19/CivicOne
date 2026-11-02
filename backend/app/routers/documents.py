@@ -14,13 +14,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
-from ..core.config import settings
 from ..core.database import get_db
 from ..core.dependencies import (
-    current_user,
     staff_user,
     platform_admin_user,
     active_department_membership_ids,
+    authorized_department_ids,
     can_manage_department,
     can_publish_for_department,
     bearer,
@@ -74,7 +73,9 @@ class AdminDocumentAccessIn(BaseModel):
 
 
 def _document_department_ids(db: Session, user: User) -> set[str]:
-    return active_department_membership_ids(db, user)
+    if user.role != "org_admin":
+        return active_department_membership_ids(db, user)
+    return authorized_department_ids(db, user)
 
 
 def _can_access_document_department(db: Session, user: User, department_id: str | None) -> bool:
@@ -171,7 +172,7 @@ def _check_document_access(doc: Document, user: User | None, db: Session) -> Non
             detail="Access denied: citizens cannot view internal or unpublished documents.",
         )
 
-    if user.role not in ("staff", "dept_admin", "platform_admin"):
+    if user.role not in ("staff", "org_admin", "platform_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: government staff credentials required.",
@@ -207,7 +208,7 @@ def list_public_documents(
         or_(Document.expiry_date.is_(None), Document.expiry_date > now),
     )
     if domain:
-        q = q.where(or_(Document.target_type == "all", Document.service_domain == domain))
+        q = q.where(Document.service_domain == domain)
     if category:
         q = q.where(Document.category == category)
 

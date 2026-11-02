@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -468,4 +468,3 @@ class TestEmailDeliveryErrorHandling:
                 assert prt.used is True, (
                     "Token must be marked used when email delivery fails"
                 )
-

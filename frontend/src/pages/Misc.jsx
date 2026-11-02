@@ -1,7 +1,7 @@
-import React from "react";
+
 import { Link } from "react-router-dom";
-import { ShieldAlert, FileQuestion, ArrowLeft, Home } from "lucide-react";
-import Logo from "../components/common/Logo";
+import { ShieldAlert, FileQuestion, Home } from "lucide-react";
+
 
 export function Unauthorized() {
   return (

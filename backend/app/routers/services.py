@@ -1,12 +1,11 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.dependencies import require_citizen
 from ..core.logging import log_audit_event
-from ..models import HealthcareFacility, AppointmentRequest, User
+from ..models import HealthcareFacility, AppointmentRequest, User, Organization
 
 router = APIRouter(prefix="/api/v1/services", tags=["services"])
 
@@ -16,6 +15,16 @@ class AppointmentCreate(BaseModel):
     appointment_date: str
     time_slot: str
     reason: str
+
+@router.get("/organizations")
+def list_public_organizations(db: Session = Depends(get_db)):
+    organizations = db.scalars(
+        select(Organization).order_by(Organization.name)
+    ).all()
+    return [
+        {"id": organization.id, "name": organization.name, "domain": organization.domain}
+        for organization in organizations
+    ]
 
 @router.get("/facilities")
 def get_healthcare_facilities(db: Session = Depends(get_db)):

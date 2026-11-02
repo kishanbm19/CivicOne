@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { User, Mail, Lock, Phone, AlertCircle, ArrowRight, CheckCircle2, ShieldCheck } from "lucide-react";
+import { User, Mail, Lock, Phone, AlertCircle, ArrowRight, ShieldCheck } from "lucide-react";
 import Logo from "../components/common/Logo";
 import { useAuth } from "../context/AuthContext";
 import { errMsg } from "../services/axios";

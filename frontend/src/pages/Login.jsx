@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Lock, Mail, AlertCircle, ArrowRight, Sparkles } from "lucide-react";
 import Logo from "../components/common/Logo";

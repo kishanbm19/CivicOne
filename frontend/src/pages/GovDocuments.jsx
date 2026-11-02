@@ -1,17 +1,6 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useOutletContext } from "react-router-dom";
-import {
-  FileText,
-  Plus,
-  Upload,
-  CheckCircle2,
-  Clock,
-  Archive,
-  Eye,
-  AlertCircle,
-  FileCheck,
-  Send
-} from "lucide-react";
+import { Plus, CheckCircle2, AlertCircle } from "lucide-react";
 import {
   listStaffDocuments,
   createDocument,

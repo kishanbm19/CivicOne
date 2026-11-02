@@ -1,20 +1,6 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useOutletContext } from "react-router-dom";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from "recharts";
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { BarChart3, TrendingUp, Clock, CheckCircle2, ShieldAlert, Inbox, Timer } from "lucide-react";
 import StatCard from "../components/dashboard/StatCard";
 import {
@@ -297,7 +283,7 @@ export default function GovAnalytics() {
           </section>
         </div>
 
-        {staffProfile?.permissions?.can_manage_staff && (
+        {["org_admin", "platform_admin"].includes(user?.role) && (
           <section className="card p-6 border border-slate-200 space-y-4 lg:col-span-12">
             <div>
               <h2 className="font-bold text-slate-900">Service-Level Agreement Deadlines</h2>

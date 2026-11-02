@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import {
   Bus,
@@ -340,7 +340,7 @@ export default function Landing() {
             </div>
             <h4 className="font-bold text-slate-900 text-base">Track Status & Transparent Updates</h4>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Monitor updates along an immutable audit timeline. Reopen resolved items if unsatisfied, or manage your cross-department consent grants.
+              Monitor updates along an immutable audit timeline and manage your cross-department consent grants.
             </p>
           </div>
         </div>

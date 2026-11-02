@@ -1,4 +1,4 @@
-import React from "react";
+
 import { Outlet } from "react-router-dom";
 import CitizenNavbar from "../components/navigation/CitizenNavbar";
 

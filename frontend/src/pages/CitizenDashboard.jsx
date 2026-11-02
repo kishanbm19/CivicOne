@@ -1,25 +1,10 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  Inbox,
-  Clock,
-  CheckCircle2,
-  Bus,
-  Building2,
-  HeartPulse,
-  Plus,
-  ArrowRight,
-  ChevronRight,
-  Shield,
-  Bell,
-  Calendar,
-  AlertCircle
-} from "lucide-react";
+import { Inbox, Clock, CheckCircle2, Bus, Building2, HeartPulse, Plus, ArrowRight, ChevronRight, Shield, Calendar } from "lucide-react";
 import StatCard from "../components/dashboard/StatCard";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import { listComplaints } from "../services/complaints";
-import { getCitizenAnalytics } from "../services/services";
 import { listPublicDocuments } from "../services/documents";
 import { useAuth } from "../context/AuthContext";
 
@@ -27,20 +12,32 @@ export default function CitizenDashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [complaints, setComplaints] = useState([]);
-  const [stats, setStats] = useState({ total: 0, in_progress: 0, resolved: 0 });
+  const [statusCounts, setStatusCounts] = useState({
+    submitted: 0,
+    assigned: 0,
+    in_progress: 0,
+    resolved: 0,
+  });
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const statusRequests = ["submitted", "assigned", "in_progress", "resolved"]
+      .map((status) => listComplaints({ status, size: 1 }));
     Promise.all([
       listComplaints({ size: 5 }),
-      getCitizenAnalytics(),
       listPublicDocuments({ size: 3 }),
+      ...statusRequests,
     ])
-      .then(([cData, sData, nData]) => {
+      .then(([cData, nData, ...statusData]) => {
         setComplaints(cData.items || []);
-        setStats(sData || { total: 0, in_progress: 0, resolved: 0 });
         setNotices(nData.items || []);
+        setStatusCounts({
+          submitted: statusData[0].total || 0,
+          assigned: statusData[1].total || 0,
+          in_progress: statusData[2].total || 0,
+          resolved: statusData[3].total || 0,
+        });
       })
       .catch((err) => {
         console.error("Citizen dashboard data error:", err);
@@ -102,23 +99,29 @@ export default function CitizenDashboard() {
         </Link>
       </div>
 
-      {/* 3 Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+      {/* Complaint status counts are scoped to this authenticated citizen by the API. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
-          title="Total Complaints Filed"
-          value={stats.total}
+          title="Pending"
+          value={statusCounts.submitted}
+          icon={Clock}
+          color="amber"
+        />
+        <StatCard
+          title="Assigned"
+          value={statusCounts.assigned}
           icon={Inbox}
           color="blue"
         />
         <StatCard
           title="In Progress"
-          value={stats.in_progress}
+          value={statusCounts.in_progress}
           icon={Clock}
           color="amber"
         />
         <StatCard
           title="Resolved"
-          value={stats.resolved}
+          value={statusCounts.resolved}
           icon={CheckCircle2}
           color="green"
         />

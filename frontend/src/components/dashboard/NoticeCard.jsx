@@ -1,5 +1,5 @@
-import React from "react";
-import { Calendar, Tag, AlertCircle, FileText, CheckCircle2, Wrench } from "lucide-react";
+
+import { Calendar, FileText } from "lucide-react";
 
 export default function NoticeCard({
   title,

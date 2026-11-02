@@ -1,4 +1,4 @@
-import React from "react";
+
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -46,6 +46,9 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
 
   const currentTheme = THEMES[domain] || THEMES.transport;
   const isPlatformAdmin = user?.role === "platform_admin";
+  const organizationName = staffProfile?.departments?.find(
+    (department) => department.organization_domain === domain
+  )?.organization_name;
 
   return (
     <aside className={`w-64 min-h-screen ${currentTheme.bg} text-slate-300 flex flex-col justify-between select-none shadow-xl transition-colors duration-300`}>
@@ -55,7 +58,7 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
           <Logo light linkTo="/government" />
           <div className="mt-3">
             <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider border ${currentTheme.tagBg}`}>
-              {currentTheme.tagText}
+              {organizationName || currentTheme.tagText}
             </span>
           </div>
         </div>
@@ -136,7 +139,7 @@ export default function GovSidebar({ domain = "transport", onNewComplaintClick =
           </div>
 
           {/* Administration (for Dept & Platform Admin) */}
-          {staffProfile?.permissions?.can_manage_staff && (
+          {(user?.role === "org_admin" || isPlatformAdmin) && (
             <div className="pt-3">
               <p className="px-3 text-[11px] font-bold tracking-wider uppercase text-slate-400/80 mb-1">
                 Administration
