@@ -14,7 +14,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+COPY docker-entrypoint.sh /usr/local/bin/civicone-entrypoint
+RUN chmod +x /usr/local/bin/civicone-entrypoint
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=10s --timeout=5s --retries=5 --start-period=30s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+
+CMD ["/usr/local/bin/civicone-entrypoint"]
