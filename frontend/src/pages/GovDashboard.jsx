@@ -26,6 +26,7 @@ import { useAuth } from "../context/AuthContext";
 
 export default function GovDashboard() {
   const { user } = useAuth();
+  const isDepartmentStaff = user?.role === "staff";
   const outletCtx = useOutletContext() || {};
   const activeDomain = outletCtx.domain;
 
@@ -53,7 +54,7 @@ export default function GovDashboard() {
       listComplaints({ domain: activeDomain, size: 4 }),
       getDepartmentAnalytics(activeDomain),
       countComplaints({ status: "submitted" }),
-      countComplaints({ status: "assigned", assigned_to_me: true }),
+      ...(isDepartmentStaff ? [countComplaints({ status: "assigned", assigned_to_me: true })] : []),
       countComplaints({ status: "in_progress" }),
       countComplaints({ status: "resolved" }),
       countComplaints({ status: "submitted", overdue_only: true }),
@@ -64,18 +65,15 @@ export default function GovDashboard() {
         compData,
         statData,
         pending,
-        assignedToMe,
-        inProgress,
-        resolved,
-        overdueSubmitted,
-        overdueAssigned,
-        overdueInProgress,
+        ...staffCounts
       ]) => {
+        const [assignedToMe, inProgress, resolved, overdueSubmitted, overdueAssigned, overdueInProgress] =
+          isDepartmentStaff ? staffCounts : [undefined, ...staffCounts];
         setComplaints(compData.items || []);
         setAnalytics(statData);
         setStatusCounts({
           pending,
-          assignedToMe,
+          assignedToMe: assignedToMe || 0,
           inProgress,
           resolved,
           overdue: overdueSubmitted + overdueAssigned + overdueInProgress,
@@ -86,7 +84,7 @@ export default function GovDashboard() {
         setLoadError("Dashboard information could not be loaded. Please try again later.");
       })
       .finally(() => setLoading(false));
-  }, [activeDomain, user?.id]);
+  }, [activeDomain, user?.id, isDepartmentStaff]);
 
   const stats = analytics || { trends: [], category_distribution: [] };
   const metricValue = (value) => (loading ? "…" : loadError ? "—" : value);
@@ -117,19 +115,21 @@ export default function GovDashboard() {
         </p>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
+      <div className={`grid grid-cols-2 gap-4 sm:gap-6 ${isDepartmentStaff ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         <StatCard
           title="Pending"
           value={metricValue(statusCounts.pending)}
           icon={Clock}
           color="amber"
         />
-        <StatCard
-          title="Assigned to Me"
-          value={metricValue(statusCounts.assignedToMe)}
-          icon={Inbox}
-          color="blue"
-        />
+        {isDepartmentStaff && (
+          <StatCard
+            title="Assigned to Me"
+            value={metricValue(statusCounts.assignedToMe)}
+            icon={Inbox}
+            color="blue"
+          />
+        )}
         <StatCard
           title="In Progress"
           value={metricValue(statusCounts.inProgress)}

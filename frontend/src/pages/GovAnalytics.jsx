@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useOutletContext } from "react-router-dom";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-import { BarChart3, TrendingUp, Clock, CheckCircle2, ShieldAlert, Inbox, Timer } from "lucide-react";
+import { BarChart3, Clock, CheckCircle2, ShieldAlert, Inbox, Timer } from "lucide-react";
 import StatCard from "../components/dashboard/StatCard";
 import {
   getDepartmentAnalytics,
@@ -18,6 +18,7 @@ export default function GovAnalytics() {
   const outletCtx = useOutletContext() || {};
   const activeDomain = outletCtx.domain || "transport";
   const currentDepartment = outletCtx.currentDepartment;
+  const selectedOrganizationId = outletCtx.selectedOrganizationId;
 
   const [analytics, setAnalytics] = useState(null);
   const [platformMetrics, setPlatformMetrics] = useState(null);
@@ -43,7 +44,12 @@ export default function GovAnalytics() {
 
   useEffect(() => {
     setLoading(true);
-    const reqs = [getDepartmentAnalytics(activeDomain)];
+    const reqs = [
+      getDepartmentAnalytics(
+        user?.role === "platform_admin" ? undefined : activeDomain,
+        selectedOrganizationId
+      ),
+    ];
     if (user?.role === "platform_admin") {
       reqs.push(getPlatformAnalytics());
     }
@@ -54,7 +60,7 @@ export default function GovAnalytics() {
       })
       .catch((err) => console.error("Error loading analytics:", err))
       .finally(() => setLoading(false));
-  }, [activeDomain, user?.role]);
+  }, [activeDomain, selectedOrganizationId, user?.role]);
 
   useEffect(() => {
     loadSlaData();
@@ -118,12 +124,6 @@ export default function GovAnalytics() {
           value={analytics?.resolved ?? 0}
           icon={CheckCircle2}
           color="green"
-        />
-        <StatCard
-          title="Assigned to Me"
-          value={analytics?.assigned_to_me ?? 0}
-          icon={TrendingUp}
-          color="blue"
         />
         <StatCard
           title="Overdue"

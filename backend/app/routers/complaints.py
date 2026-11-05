@@ -185,7 +185,12 @@ def _visible(db: Session, user: User, c: Complaint) -> bool:
     return False
 
 def _can_process_complaint(db: Session, user: User, c: Complaint) -> bool:
-    if user.role not in ("staff", "org_admin"):
+    if user.role == "staff":
+        return (
+            c.assigned_to_user_id == user.id
+            and c.department_id in authorized_department_ids(db, user)
+        )
+    if user.role != "org_admin":
         return False
     authorized_depts = authorized_department_ids(db, user)
     if c.department_id in authorized_depts:
@@ -198,6 +203,20 @@ def _can_process_complaint(db: Session, user: User, c: Complaint) -> bool:
         ).all()
         return c.organization_id in set(authorized_orgs)
     return False
+
+def _can_assign_in_department(db: Session, user: User, department_id: str) -> bool:
+    if user.role in ("platform_admin", "org_admin"):
+        return can_manage_department(db, user, department_id)
+    if user.role != "staff":
+        return False
+    role = db.scalar(
+        select(DepartmentMembership.role_in_dept).where(
+            DepartmentMembership.user_id == user.id,
+            DepartmentMembership.department_id == department_id,
+            DepartmentMembership.is_active.is_(True),
+        )
+    )
+    return role in ("department_admin", "admin")
 
 @router.post("/{cid}/image")
 def upload_complaint_image(
@@ -671,7 +690,7 @@ def update_complaint_status(
         if not (c.status in ("resolved", "closed") and body.new_status == "reopened"):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Citizens can only request reopening of resolved complaints")
     elif not _can_process_complaint(db, user, c):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can update its status")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the assigned staff member or an authorized organization administrator can update this complaint")
 
     legacy_staff_transition = body.new_status in {
         "acknowledged", "in_progress", "on_hold", "resolved"
@@ -757,8 +776,8 @@ def assign_complaint(
     c = db.get(Complaint, cid)
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
-    if not _can_process_complaint(db, user, c):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can assign it")
+    if c.department_id and not _can_assign_in_department(db, user, c.department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only administrators can assign or reassign complaints")
 
     target_department_id = body.department_id or c.department_id
     if not target_department_id:
@@ -777,9 +796,9 @@ def assign_complaint(
         )
     if target_department.organization_id != source_organization_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Complaints cannot be reassigned to another organization")
-    if c.department_id and c.department_id != target_department_id and not can_manage_department(db, user, c.department_id):
+    if c.department_id and c.department_id != target_department_id and not _can_assign_in_department(db, user, c.department_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot reassign complaints from this department")
-    if not can_manage_department(db, user, target_department_id):
+    if not _can_assign_in_department(db, user, target_department_id):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "You cannot assign complaints to this department")
 
     assigned_staff = None
@@ -893,7 +912,7 @@ def add_internal_note(
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     if not _can_process_complaint(db, user, c):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can add internal notes")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the assigned staff member or an authorized organization administrator can add internal notes")
 
     note = ComplaintInternalNote(
         complaint_id=c.id,
@@ -926,7 +945,7 @@ def request_additional_information(
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     if not _can_process_complaint(db, user, c):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can request information")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the assigned staff member or an authorized organization administrator can request information")
     _activity(db, c.id, user.id, "information_requested", body.message, True)
     db.add(Notification(
         user_id=c.citizen_id,
@@ -960,7 +979,7 @@ def upload_resolution_evidence(
     if not c or not _visible(db, user, c):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Complaint not found")
     if not _can_process_complaint(db, user, c):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only staff in the complaint's department can upload evidence")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the assigned staff member or an authorized organization administrator can upload evidence")
     content = file.file.read()
     filename, detected_mime, file_size = validate_and_save_upload(
         filename=file.filename or "resolution-evidence.pdf",

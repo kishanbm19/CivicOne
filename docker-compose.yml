@@ -1,27 +1,54 @@
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: civicone_db
+      POSTGRES_USER: civicone
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-civicone-local-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   backend:
-    build: ./backend
-    env_file: ./backend/.env
+    build:
+      context: ./backend
+    env_file:
+      - path: ./.env
+        required: false
+      - path: ./backend/.env
+        required: false
     environment:
       APP_ENV: production
-      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in backend/.env}
-      OPENAI_API_KEY: ${LOAD_TEST_OPENAI_API_KEY:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://civicone:${POSTGRES_PASSWORD:-civicone-local-password}@db:5432/civicone_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-civicone-local-development-key-do-not-use-in-production}
+      FRONTEND_ORIGINS: ${FRONTEND_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       UPLOAD_DIRECTORY: /app/storage
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - backend_storage:/app/storage
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api/v1
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       backend:
         condition: service_healthy
+    restart: unless-stopped
 
 volumes:
+  postgres_data:
   backend_storage:

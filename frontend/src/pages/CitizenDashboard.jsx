@@ -5,12 +5,13 @@ import StatCard from "../components/dashboard/StatCard";
 import StatusBadge from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import { listComplaints } from "../services/complaints";
-import { listPublicDocuments } from "../services/documents";
+import usePublicDocuments from "../hooks/usePublicDocuments";
 import { useAuth } from "../context/AuthContext";
 
 export default function CitizenDashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { documents: notices } = usePublicDocuments({ size: 100 });
   const [complaints, setComplaints] = useState([]);
   const [statusCounts, setStatusCounts] = useState({
     submitted: 0,
@@ -18,7 +19,6 @@ export default function CitizenDashboard() {
     in_progress: 0,
     resolved: 0,
   });
-  const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,12 +26,10 @@ export default function CitizenDashboard() {
       .map((status) => listComplaints({ status, size: 1 }));
     Promise.all([
       listComplaints({ size: 5 }),
-      listPublicDocuments({ size: 3 }),
       ...statusRequests,
     ])
-      .then(([cData, nData, ...statusData]) => {
+      .then(([cData, ...statusData]) => {
         setComplaints(cData.items || []);
-        setNotices(nData.items || []);
         setStatusCounts({
           submitted: statusData[0].total || 0,
           assigned: statusData[1].total || 0,
@@ -243,12 +241,12 @@ export default function CitizenDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="md:col-span-2 card p-6 border border-slate-200 space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <h3 className="font-bold text-slate-900 text-base">Latest Verified Public Notices</h3>
+            <h3 className="font-bold text-slate-900 text-base">Verified Public Notices</h3>
             <Link to="/app/notices" className="text-xs font-semibold text-blue-600 hover:underline">
               View All
             </Link>
           </div>
-          <div className="divide-y divide-slate-100">
+          <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 pr-2">
             {notices.map((n) => (
               <div key={n.id} className="py-3 flex items-center justify-between gap-4">
                 <div>

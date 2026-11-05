@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 from ..core.database import get_db
@@ -84,11 +84,25 @@ def get_citizen_dashboard_analytics(user: User = Depends(require_citizen), db: S
     }
 
 @router.get("/department")
-def get_department_analytics(domain: str | None = None, user: User = Depends(staff_user), db: Session = Depends(get_db)):
+def get_department_analytics(
+    domain: str | None = None,
+    organization_id: str | None = None,
+    user: User = Depends(staff_user),
+    db: Session = Depends(get_db),
+):
     auth_depts = authorized_department_ids(db, user)
     filters = []
     if user.role != "platform_admin":
+        if organization_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Only platform administrators can filter analytics by organization",
+            )
         filters.append(Complaint.department_id.in_(auth_depts or {"none"}))
+    elif organization_id:
+        if not db.get(Organization, organization_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        filters.append(Complaint.organization_id == organization_id)
     if domain:
         filters.append(Complaint.domain == domain)
 
@@ -213,6 +227,12 @@ def get_department_analytics(domain: str | None = None, user: User = Depends(sta
     if user.role != "platform_admin":
         document_filters.append(
             or_(Document.department_id.in_(auth_depts or {"none"}), Document.author_id == user.id)
+        )
+    elif organization_id:
+        document_filters.append(
+            Document.department_id.in_(
+                select(Department.id).where(Department.organization_id == organization_id)
+            )
         )
     if domain:
         document_filters.append(Document.service_domain == domain)

@@ -82,6 +82,12 @@ def _can_access_document_department(db: Session, user: User, department_id: str 
     return bool(department_id and department_id in _document_department_ids(db, user))
 
 
+def _can_review_document(db: Session, user: User, doc: Document) -> bool:
+    return user.role == "org_admin" and _can_access_document_department(
+        db, user, doc.department_id
+    )
+
+
 def _get_optional_user(
     cred=Depends(bearer), db: Session = Depends(get_db)
 ) -> User | None:
@@ -576,10 +582,8 @@ def approve_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not _can_access_document_department(db, user, doc.department_id) or not (
-        doc.department_id and can_manage_department(db, user, doc.department_id)
-    ):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized department supervisor can approve this document")
+    if not _can_review_document(db, user, doc):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the organization administrator can approve this document")
     if doc.status != "review":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only documents under review can be approved")
 
@@ -607,10 +611,8 @@ def request_document_changes(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not _can_access_document_department(db, user, doc.department_id) or not (
-        doc.department_id and can_manage_department(db, user, doc.department_id)
-    ):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized supervisor can request changes")
+    if not _can_review_document(db, user, doc):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the organization administrator can request changes")
     if doc.status != "review":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only documents under review can be returned for changes")
     doc.status = "changes_requested"
@@ -645,10 +647,8 @@ def reject_document(
     doc = db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    if not _can_access_document_department(db, user, doc.department_id) or not (
-        doc.department_id and can_manage_department(db, user, doc.department_id)
-    ):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only an authorized supervisor can reject documents")
+    if not _can_review_document(db, user, doc):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the organization administrator can reject documents")
     if doc.status != "review":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only documents under review can be rejected")
     doc.status = "rejected"

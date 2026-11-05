@@ -44,8 +44,9 @@ export default function GovDocuments() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const canApprove = staffProfile?.permissions?.can_approve_documents;
+  const canApprove = user?.role === "org_admin";
   const canPublish = staffProfile?.permissions?.can_publish_documents;
+  const showDocumentActions = user?.role !== "staff";
 
   const loadDocuments = () => {
     setLoading(true);
@@ -184,6 +185,15 @@ export default function GovDocuments() {
     return d.status === activeTab;
   });
 
+  const audienceLabel = (doc) => {
+    if (doc.target_type === "all") return "All citizens";
+    if (doc.target_type === "department") {
+      return departments.find((department) => department.id === doc.target_department_id)?.name
+        || "Selected department";
+    }
+    return `${doc.service_domain} service users`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -251,21 +261,22 @@ export default function GovDocuments() {
                 <th className="py-3 px-4">Title</th>
                 <th className="py-3 px-4">Domain</th>
                 <th className="py-3 px-4">Category</th>
+                <th className="py-3 px-4">Audience</th>
                 <th className="py-3 px-4">Status</th>
                 <th className="py-3 px-4">Author</th>
-                <th className="py-3 px-4">Actions</th>
+                {showDocumentActions && <th className="py-3 px-4">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan="6" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan={showDocumentActions ? 7 : 6} className="py-12 text-center text-slate-400 text-xs">
                     Loading department documents...
                   </td>
                 </tr>
               ) : filteredDocs.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="py-12 text-center text-slate-400 text-xs">
+                  <td colSpan={showDocumentActions ? 7 : 6} className="py-12 text-center text-slate-400 text-xs">
                     No documents found in this status.
                   </td>
                 </tr>
@@ -285,6 +296,9 @@ export default function GovDocuments() {
                     <td className="py-3.5 px-4 text-slate-600 capitalize">
                       {doc.category?.replace("_", " ")}
                     </td>
+                    <td className="py-3.5 px-4 text-slate-600">
+                      {audienceLabel(doc)}
+                    </td>
                     <td className="py-3.5 px-4">
                       <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize border ${
                         doc.status === "published"
@@ -301,7 +315,7 @@ export default function GovDocuments() {
                     <td className="py-3.5 px-4 text-xs text-slate-500">
                       {doc.author_name || "Staff"}
                     </td>
-                    <td className="py-3.5 px-4">
+                    {showDocumentActions && <td className="py-3.5 px-4">
                       <div className="flex items-center gap-2">
                         {/* Stage 1: Draft -> Submit for review */}
                         {doc.status === "draft" && (
@@ -367,7 +381,7 @@ export default function GovDocuments() {
                           </button>
                         )}
                       </div>
-                    </td>
+                    </td>}
                   </tr>
                 ))
               )}

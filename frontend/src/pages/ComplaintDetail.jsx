@@ -28,11 +28,26 @@ export default function ComplaintDetail() {
   const outletCtx = useOutletContext() || {};
 
   const isStaff = user?.role !== "citizen";
+  const canAssignComplaint = (complaintData) => (
+    user?.role === "org_admin"
+    || (
+      user?.role === "staff"
+      && complaintData?.can_process
+      && complaintData?.assigned_to_user_id === user.id
+      && staffProfile?.departments?.some(
+        (department) => department.id === complaintData.department_id
+          && ["department_admin", "admin"].includes(department.role_in_dept)
+      )
+    )
+  );
 
   const [complaint, setComplaint] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
+  const isAssignedToCurrentUser = complaint?.assigned_to_user_id === user?.id;
+  const canShowProcessingWorkflow = complaint?.can_process
+    && (user?.role !== "staff" || isAssignedToCurrentUser);
 
   // Staff action inputs
   const [newStatus, setNewStatus] = useState("");
@@ -57,7 +72,7 @@ export default function ComplaintDetail() {
         setNewStatus(data.status);
         setAssignmentDepartment(data.department_id || "");
         setAssignmentStaff(data.assigned_to_user_id || "");
-        if (user?.role !== "citizen") {
+        if (canAssignComplaint(data)) {
           Promise.all([
             listComplaintStaffOptions(data.domain),
             listDepartments(),
@@ -322,6 +337,14 @@ export default function ComplaintDetail() {
               <span>{new Date(complaint.created_at).toLocaleString()}</span>
             </p>
           </div>
+          {isStaff && (
+            <div>
+              <span className="text-slate-400 font-medium block">Assigned Staff:</span>
+              <p className="font-semibold text-slate-800 mt-0.5">
+                {complaint.assigned_staff_name || "Department queue (unassigned)"}
+              </p>
+            </div>
+          )}
           <div>
             <span className="text-slate-400 font-medium block">Resolution Deadline:</span>
             <p className="font-semibold text-slate-800 mt-0.5 flex items-center gap-1">
@@ -406,55 +429,57 @@ export default function ComplaintDetail() {
       {/* Staff Actions Section (Only for Staff / Admin) */}
       {isStaff && !complaint.can_process && (
         <div className="card p-4 border border-slate-200 bg-slate-50 text-sm text-slate-600">
-          You can view this complaint and its resolution history because it belongs
-          to your organization. Processing actions and internal notes are limited to
-          staff authorized for its department.
+          You can view this complaint because it belongs to your organization.
+          Only its assigned staff member or an administrator can make changes.
         </div>
       )}
 
-      {isStaff && complaint.can_process && (
+      {isStaff
+        && canAssignComplaint(complaint) && (
+        <div className="card p-6 border border-slate-200">
+          <form onSubmit={handleAssignment} className="space-y-3">
+            <h3 className="font-bold text-slate-900 text-sm">Assign / Reassign Complaint</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <select
+                value={assignmentDepartment}
+                onChange={(e) => {
+                  setAssignmentDepartment(e.target.value);
+                  setAssignmentStaff("");
+                }}
+                className="input"
+                required
+              >
+                <option value="">Select department</option>
+                {departments.map((dept) => (
+                  <option key={dept.id} value={dept.id}>{dept.name}</option>
+                ))}
+              </select>
+              <select
+                value={assignmentStaff}
+                onChange={(e) => setAssignmentStaff(e.target.value)}
+                className="input"
+                disabled={!assignmentDepartment}
+              >
+                <option value="">Department queue (unassigned)</option>
+                {staffOptions
+                  .filter((staff) => staff.department_id === assignmentDepartment)
+                  .map((staff) => (
+                    <option key={staff.user_id} value={staff.user_id}>{staff.full_name}</option>
+                  ))}
+              </select>
+            </div>
+            <button type="submit" disabled={submittingAction || !assignmentDepartment} className="btn text-xs">
+              Save Assignment
+            </button>
+          </form>
+        </div>
+      )}
+
+      {isStaff && canShowProcessingWorkflow && (
         <div className="card p-6 sm:p-8 border border-slate-200 space-y-6">
           <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-3">
             Department Processing & Workflow
           </h2>
-
-          {staffProfile?.permissions?.can_assign && (
-            <form onSubmit={handleAssignment} className="space-y-3 border-b border-slate-100 pb-5">
-              <h3 className="font-bold text-slate-900 text-sm">Assign / Reassign Complaint</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <select
-                  value={assignmentDepartment}
-                  onChange={(e) => {
-                    setAssignmentDepartment(e.target.value);
-                    setAssignmentStaff("");
-                  }}
-                  className="input"
-                  required
-                >
-                  <option value="">Select department</option>
-                  {departments.map((dept) => (
-                    <option key={dept.id} value={dept.id}>{dept.name}</option>
-                  ))}
-                </select>
-                <select
-                  value={assignmentStaff}
-                  onChange={(e) => setAssignmentStaff(e.target.value)}
-                  className="input"
-                  disabled={!assignmentDepartment}
-                >
-                  <option value="">Department queue (unassigned)</option>
-                  {staffOptions
-                    .filter((staff) => staff.department_id === assignmentDepartment)
-                    .map((staff) => (
-                      <option key={staff.user_id} value={staff.user_id}>{staff.full_name}</option>
-                    ))}
-                </select>
-              </div>
-              <button type="submit" disabled={submittingAction || !assignmentDepartment} className="btn text-xs">
-                Save Assignment
-              </button>
-            </form>
-          )}
 
           {/* Status Update Form */}
           <form onSubmit={handleStatusChange} className="space-y-4">

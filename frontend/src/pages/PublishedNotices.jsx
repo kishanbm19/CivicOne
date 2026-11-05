@@ -1,27 +1,17 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Calendar } from "lucide-react";
-
-import { listPublicDocuments } from "../services/documents";
+import usePublicDocuments from "../hooks/usePublicDocuments";
 
 export default function PublishedNotices() {
   const [searchParams] = useSearchParams();
   const [domainFilter, setDomainFilter] = useState(searchParams.get("domain") || "");
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [documents, setDocuments] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    listPublicDocuments({
-      domain: domainFilter || undefined,
-      category: categoryFilter || undefined,
-      size: 50,
-    })
-      .then((data) => setDocuments(data.items || []))
-      .catch((err) => console.error("Error loading notices:", err))
-      .finally(() => setLoading(false));
-  }, [domainFilter, categoryFilter]);
+  const { documents, loading } = usePublicDocuments({
+    domain: domainFilter,
+    category: categoryFilter,
+    size: 50,
+  });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">

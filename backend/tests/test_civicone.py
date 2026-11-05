@@ -137,6 +137,22 @@ def grant_department_membership(user_id: str, department_id: str):
         ))
         db.commit()
 
+
+def organization_admin_headers_for_department(department_id: str):
+    with TestingSessionLocal() as db:
+        department = db.get(Department, department_id)
+        admin = User(
+            id="org-admin-review",
+            email="org-admin-review@test.civicone.test",
+            full_name="Organization Admin Reviewer",
+            role="org_admin",
+            organization_id=department.organization_id,
+            password_hash=hash_password("Pass#1234"),
+        )
+        db.add(admin)
+        db.commit()
+    return auth_headers("org-admin-review")
+
 def test_public_analytics_reports_empty_database_without_demo_values():
     response = client.get("/api/v1/analytics/public")
 
@@ -185,6 +201,59 @@ def test_public_analytics_reports_saved_complaints_by_domain():
         "pending": 0,
         "rejected": 0,
     }
+
+def test_platform_department_analytics_can_filter_by_organization():
+    with TestingSessionLocal() as db:
+        transport_org = db.scalar(
+            select(Organization).where(Organization.domain == "transport")
+        )
+        healthcare_org = Organization(name="Analytics Health Org", domain="healthcare")
+        db.add(healthcare_org)
+        db.flush()
+        db.add_all([
+            Complaint(
+                reference="ORG-ANALYTICS-TRANSPORT",
+                citizen_id="cit-001",
+                domain="transport",
+                organization_id=transport_org.id,
+                title="Transport organization complaint",
+                description="Organization analytics fixture.",
+                category="bus_delay",
+                address="Transport address",
+            ),
+            Complaint(
+                reference="ORG-ANALYTICS-HEALTH",
+                citizen_id="cit-001",
+                domain="healthcare",
+                organization_id=healthcare_org.id,
+                title="Healthcare organization complaint",
+                description="Organization analytics fixture.",
+                category="facility_cleanliness",
+                address="Healthcare address",
+            ),
+        ])
+        db.commit()
+        transport_org_id = transport_org.id
+        healthcare_org_id = healthcare_org.id
+
+    headers = auth_headers("adm-001")
+    transport_result = client.get(
+        f"/api/v1/analytics/department?organization_id={transport_org_id}",
+        headers=headers,
+    )
+    healthcare_result = client.get(
+        f"/api/v1/analytics/department?organization_id={healthcare_org_id}",
+        headers=headers,
+    )
+
+    assert transport_result.status_code == 200
+    assert transport_result.json()["total"] == 1
+    assert healthcare_result.status_code == 200
+    assert healthcare_result.json()["total"] == 1
+    assert client.get(
+        f"/api/v1/analytics/department?organization_id={transport_org_id}",
+        headers=auth_headers("stf-001"),
+    ).status_code == 403
 
 def test_registration_and_portal_isolation():
     # 1. Register new citizen
@@ -596,6 +665,7 @@ def test_document_publication_workflow():
     doc_id = d_res.json()["id"]
     assert d_res.json()["status"] == "draft"
     grant_department_membership("adm-001", d_res.json()["department_id"])
+    org_admin_headers = organization_admin_headers_for_department(d_res.json()["department_id"])
 
     # Submit for review
     sub_res = client.post(f"/api/v1/documents/{doc_id}/submit-review", headers=headers_staff)
@@ -603,11 +673,11 @@ def test_document_publication_workflow():
     assert sub_res.json()["status"] == "review"
 
     # Admin approves and publishes
-    appr_res = client.post(f"/api/v1/documents/{doc_id}/approve", headers=headers_admin)
+    appr_res = client.post(f"/api/v1/documents/{doc_id}/approve", headers=org_admin_headers)
     assert appr_res.status_code == 200
     assert appr_res.json()["status"] == "approved"
 
-    pub_res = client.post(f"/api/v1/documents/{doc_id}/publish", headers=headers_admin)
+    pub_res = client.post(f"/api/v1/documents/{doc_id}/publish", headers=org_admin_headers)
     assert pub_res.status_code == 200
     assert pub_res.json()["status"] == "published"
 
@@ -616,6 +686,17 @@ def test_document_publication_workflow():
     assert public_res.status_code == 200
     items = public_res.json()["items"]
     assert any(i["id"] == doc_id for i in items)
+
+    unpublish_res = client.post(
+        f"/api/v1/documents/{doc_id}/unpublish",
+        headers=headers_admin,
+    )
+    assert unpublish_res.status_code == 200
+    assert unpublish_res.json()["status"] == "archived"
+
+    revoked_res = client.get("/api/v1/documents/public?domain=transport")
+    assert revoked_res.status_code == 200
+    assert all(item["id"] != doc_id for item in revoked_res.json()["items"])
 
 def test_consent_grant_and_revocation():
     headers = auth_headers("cit-001")
@@ -894,7 +975,6 @@ def test_organization_admin_access_is_scoped_to_assigned_organization():
 
 def test_scheduled_announcement_targets_citizens_and_expires():
     headers_staff = auth_headers("stf-001")
-    headers_admin = auth_headers("adm-001")
     future = datetime.now(timezone.utc) + timedelta(days=2)
     expiry = future + timedelta(days=3)
     draft = client.post("/api/v1/documents", headers=headers_staff, json={
@@ -910,6 +990,7 @@ def test_scheduled_announcement_targets_citizens_and_expires():
     assert draft.status_code == 201
     document_id = draft.json()["id"]
     grant_department_membership("adm-001", draft.json()["department_id"])
+    headers_admin = organization_admin_headers_for_department(draft.json()["department_id"])
 
     assert client.post(
         f"/api/v1/documents/{document_id}/submit-review",
@@ -953,7 +1034,6 @@ def test_scheduled_announcement_targets_citizens_and_expires():
 
 def test_document_review_can_request_changes_and_reject():
     staff_headers = auth_headers("stf-001")
-    admin_headers = auth_headers("adm-001")
     draft = client.post("/api/v1/documents", headers=staff_headers, json={
         "title": "Review workflow notice",
         "description": "A draft needing review.",
@@ -963,10 +1043,45 @@ def test_document_review_can_request_changes_and_reject():
     assert draft.status_code == 201
     document_id = draft.json()["id"]
     grant_department_membership("adm-001", draft.json()["department_id"])
+    admin_headers = organization_admin_headers_for_department(draft.json()["department_id"])
+    with TestingSessionLocal() as db:
+        membership = db.scalar(select(DepartmentMembership).where(
+            DepartmentMembership.user_id == "stf-001",
+            DepartmentMembership.department_id == draft.json()["department_id"],
+        ))
+        membership.role_in_dept = "supervisor"
+        db.commit()
     assert client.post(
         f"/api/v1/documents/{document_id}/submit-review",
         headers=staff_headers,
     ).status_code == 200
+    assert client.post(
+        f"/api/v1/documents/{document_id}/approve",
+        headers=staff_headers,
+    ).status_code == 403
+    assert client.post(
+        f"/api/v1/documents/{document_id}/request-changes",
+        headers=staff_headers,
+        json={"message": "Staff cannot review this notice."},
+    ).status_code == 403
+    with TestingSessionLocal() as db:
+        other_organization = Organization(name="Other Review Organization", domain="healthcare")
+        db.add(other_organization)
+        db.flush()
+        other_admin = User(
+            id="other-org-admin-review",
+            email="other-org-admin-review@test.civicone.test",
+            full_name="Other Organization Admin",
+            role="org_admin",
+            organization_id=other_organization.id,
+            password_hash=hash_password("Pass#1234"),
+        )
+        db.add(other_admin)
+        db.commit()
+    assert client.post(
+        f"/api/v1/documents/{document_id}/approve",
+        headers=auth_headers("other-org-admin-review"),
+    ).status_code == 403
 
     changes = client.post(
         f"/api/v1/documents/{document_id}/request-changes",
@@ -989,6 +1104,12 @@ def test_document_review_can_request_changes_and_reject():
         f"/api/v1/documents/{document_id}/submit-review",
         headers=staff_headers,
     ).status_code == 200
+    rejected = client.post(
+        f"/api/v1/documents/{document_id}/reject",
+        headers=staff_headers,
+        json={"message": "Staff cannot reject this notice."},
+    )
+    assert rejected.status_code == 403
     rejected = client.post(
         f"/api/v1/documents/{document_id}/reject",
         headers=admin_headers,

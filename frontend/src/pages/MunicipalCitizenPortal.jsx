@@ -16,16 +16,18 @@ import { MunicipalHeroIllustration } from "../components/common/HeroIllustration
 import StatCard from "../components/dashboard/StatCard";
 import NoticeCard from "../components/dashboard/NoticeCard";
 import { getPublicStats } from "../services/services";
-import { listPublicDocuments } from "../services/documents";
+import usePublicDocuments from "../hooks/usePublicDocuments";
 
 export default function MunicipalCitizenPortal() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [stats, setStats] = useState(null);
   const [statsError, setStatsError] = useState(false);
-  const [notices, setNotices] = useState([]);
-  const [noticesLoading, setNoticesLoading] = useState(true);
-  const [noticesError, setNoticesError] = useState(false);
+  const {
+    documents: notices,
+    loading: noticesLoading,
+    error: noticesError,
+  } = usePublicDocuments({ domain: "municipal", size: 3 });
 
   useEffect(() => {
     getPublicStats("municipal")
@@ -34,13 +36,6 @@ export default function MunicipalCitizenPortal() {
         console.error("Unable to load public service statistics:", err);
         setStatsError(true);
       });
-    listPublicDocuments({ domain: "municipal", size: 3 })
-      .then((data) => setNotices(data.items || []))
-      .catch((err) => {
-        console.error("Unable to load municipal notices:", err);
-        setNoticesError(true);
-      })
-      .finally(() => setNoticesLoading(false));
   }, []);
 
   const handleSearchSubmit = (e) => {

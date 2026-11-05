@@ -1,26 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Bus, MapPin, Building, ShieldAlert, Search, ArrowRight } from "lucide-react";
 import { TransportHeroIllustration } from "../components/common/HeroIllustrations";
 import NoticeCard from "../components/dashboard/NoticeCard";
-import { listPublicDocuments } from "../services/documents";
+import usePublicDocuments from "../hooks/usePublicDocuments";
 
 export default function TransportCitizenPortal() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
-  const [notices, setNotices] = useState([]);
-  const [noticesLoading, setNoticesLoading] = useState(true);
-  const [noticesError, setNoticesError] = useState(false);
-
-  useEffect(() => {
-    listPublicDocuments({ domain: "transport", size: 3 })
-      .then((data) => setNotices(data.items || []))
-      .catch((err) => {
-        console.error("Unable to load transport notices:", err);
-        setNoticesError(true);
-      })
-      .finally(() => setNoticesLoading(false));
-  }, []);
+  const {
+    documents: notices,
+    loading: noticesLoading,
+    error: noticesError,
+  } = usePublicDocuments({ domain: "transport", size: 3 });
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();

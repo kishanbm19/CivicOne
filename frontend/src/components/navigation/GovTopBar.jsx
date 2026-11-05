@@ -1,11 +1,20 @@
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Search, Bell, ChevronDown, Building } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
-export default function GovTopBar({ onSearch = null, domain = "transport", currentDepartment = null, onSelectDepartment = null }) {
+export default function GovTopBar({
+  onSearch = null,
+  domain = "transport",
+  currentDepartment = null,
+  organizations = [],
+  selectedOrganizationId = "",
+  onSelectOrganization = null,
+}) {
   const { user, staffProfile, unreadCount } = useAuth();
+  const location = useLocation();
   const [searchValue, setSearchValue] = useState("");
-  const [showDeptDropdown, setShowDeptDropdown] = useState(false);
+  const [showOrganizationDropdown, setShowOrganizationDropdown] = useState(false);
 
   const handleSearchChange = (e) => {
     setSearchValue(e.target.value);
@@ -22,6 +31,11 @@ export default function GovTopBar({ onSearch = null, domain = "transport", curre
   const departments = staffProfile?.departments || [];
   const organization = departments.find(
     (department) => department.organization_domain === domain
+  );
+  const isSystemOverview = user?.role === "platform_admin"
+    && location.pathname === "/government/analytics";
+  const selectedOrganization = organizations.find(
+    (item) => item.id === selectedOrganizationId
   );
   const roleLabel = user?.role === "platform_admin"
     ? "Platform Administrator"
@@ -45,33 +59,47 @@ export default function GovTopBar({ onSearch = null, domain = "transport", curre
 
       {/* Right Controls */}
       <div className="flex items-center gap-4">
-        {/* Department Context Selector (if multi-dept or admin) */}
-        {departments.length > 1 && (
+        {isSystemOverview && organizations.length > 0 && (
           <div className="relative">
             <button
-              onClick={() => setShowDeptDropdown(!showDeptDropdown)}
+              onClick={() => setShowOrganizationDropdown(!showOrganizationDropdown)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 shadow-sm"
+              aria-haspopup="listbox"
+              aria-expanded={showOrganizationDropdown}
             >
               <Building size={14} className="text-slate-500" />
-              <span>{currentDepartment?.name || "All Departments"}</span>
+              <span>{selectedOrganization?.name || "All Organizations"}</span>
               <ChevronDown size={13} className="text-slate-400" />
             </button>
-            {showDeptDropdown && (
+            {showOrganizationDropdown && (
               <div className="absolute right-0 mt-2 w-56 rounded-xl bg-white shadow-elevated border border-slate-100 py-1.5 z-50">
                 <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Switch Department
+                  Select Organization
                 </p>
-                {departments.map((dept) => (
+                <button
+                  onClick={() => {
+                    onSelectOrganization?.("");
+                    setShowOrganizationDropdown(false);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+                  role="option"
+                  aria-selected={!selectedOrganizationId}
+                >
+                  All Organizations
+                </button>
+                {organizations.map((item) => (
                   <button
-                    key={dept.id}
+                    key={item.id}
                     onClick={() => {
-                      if (onSelectDepartment) onSelectDepartment(dept);
-                      setShowDeptDropdown(false);
+                      onSelectOrganization?.(item.id);
+                      setShowOrganizationDropdown(false);
                     }}
                     className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 flex items-center justify-between"
+                    role="option"
+                    aria-selected={item.id === selectedOrganizationId}
                   >
-                    <span>{dept.name}</span>
-                    <span className="text-[10px] text-slate-400 capitalize">{dept.organization_domain}</span>
+                    <span>{item.name}</span>
+                    <span className="text-[10px] text-slate-400 capitalize">{item.domain}</span>
                   </button>
                 ))}
               </div>
@@ -95,6 +123,11 @@ export default function GovTopBar({ onSearch = null, domain = "transport", curre
             <p className="text-xs font-bold text-slate-900 leading-tight">
               {user?.full_name || "Staff Member"}
             </p>
+            {user?.role === "staff" && (
+              <p className="text-[10px] font-medium text-slate-400">
+                {currentDepartment?.name || organization?.name || "Department"}
+              </p>
+            )}
             <p className="text-[11px] font-medium text-slate-500">
               {roleLabel}
               {organization?.organization_name && user?.role === "org_admin" && (

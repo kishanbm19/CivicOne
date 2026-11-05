@@ -13,7 +13,11 @@ import {
   Sparkles,
   ShieldAlert,
 } from "lucide-react";
-import { createComplaint, uploadComplaintImage } from "../services/complaints";
+import {
+  listComplaintOrganizations,
+  createComplaint,
+  uploadComplaintImage,
+} from "../services/complaints";
 import { errMsg } from "../services/axios";
 
 export default function NewComplaint() {

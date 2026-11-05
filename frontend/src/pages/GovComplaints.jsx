@@ -1,17 +1,22 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams, useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { Search, RefreshCw } from "lucide-react";
 import StatusBadge, { COMPLAINT_STATUSES } from "../components/common/StatusBadge";
 import PriorityBadge from "../components/common/PriorityBadge";
 import { listComplaints, listComplaintStaffOptions } from "../services/complaints";
+import { useAuth } from "../context/AuthContext";
 
 export default function GovComplaints() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const outletCtx = useOutletContext() || {};
   const activeDomain = outletCtx.domain || "transport";
+  const isDepartmentStaff = user?.role === "staff";
 
-  const [activeTab, setActiveTab] = useState(searchParams.get("filter") === "assigned_to_me" ? "assigned_to_me" : "all");
+  const [activeTab, setActiveTab] = useState(
+    isDepartmentStaff && searchParams.get("filter") === "assigned_to_me" ? "assigned_to_me" : "all"
+  );
   const [complaints, setComplaints] = useState([]);
   const [totalComplaints, setTotalComplaints] = useState(0);
   const [page, setPage] = useState(1);
@@ -40,7 +45,7 @@ export default function GovComplaints() {
       end_date: endOfDay,
       overdue_only: overdueOnly || undefined,
       search: search || undefined,
-      assigned_to_me: activeTab === "assigned_to_me",
+      assigned_to_me: isDepartmentStaff && activeTab === "assigned_to_me" ? true : undefined,
       size: 50,
     })
       .then((data) => {
@@ -53,7 +58,7 @@ export default function GovComplaints() {
 
   useEffect(() => {
     fetchComplaints();
-  }, [activeDomain, activeTab, statusFilter, priorityFilter, categoryFilter, assignedStaffFilter, startDate, endDate, overdueOnly, page]);
+  }, [activeDomain, activeTab, isDepartmentStaff, statusFilter, priorityFilter, categoryFilter, assignedStaffFilter, startDate, endDate, overdueOnly, page]);
 
   useEffect(() => {
     listComplaintStaffOptions(activeDomain)
@@ -81,35 +86,29 @@ export default function GovComplaints() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200">
-        <button
-          onClick={() => {
-            setPage(1);
-            setActiveTab("all");
-          }}
-          className={`px-4 py-2 text-xs sm:text-sm font-bold border-b-2 transition-colors ${
-            activeTab === "all"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          All Organization Complaints
-        </button>
-        <button
-          onClick={() => {
-            setPage(1);
-            setActiveTab("assigned_to_me");
-          }}
-          className={`px-4 py-2 text-xs sm:text-sm font-bold border-b-2 transition-colors ${
-            activeTab === "assigned_to_me"
-              ? "border-blue-600 text-blue-600"
-              : "border-transparent text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          Assigned to Me
-        </button>
-      </div>
+      {isDepartmentStaff && (
+        <div className="flex items-center gap-2 border-b border-slate-200">
+          {[
+            { label: "All Complaints", value: "all" },
+            { label: "Assigned to Me", value: "assigned_to_me" },
+          ].map((tab) => (
+            <button
+              key={tab.value}
+              onClick={() => {
+                setPage(1);
+                setActiveTab(tab.value);
+              }}
+              className={`px-4 py-2 text-xs sm:text-sm font-bold border-b-2 transition-colors ${
+                activeTab === tab.value
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="card p-4 border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-3">

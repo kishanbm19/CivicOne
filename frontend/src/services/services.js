@@ -56,9 +56,12 @@ export const getPublicStats = async (domain) => {
   return res.data;
 };
 
-export const getDepartmentAnalytics = async (domain) => {
+export const getDepartmentAnalytics = async (domain, organizationId) => {
   const res = await api.get("/analytics/department", {
-    params: domain ? { domain } : {},
+    params: {
+      ...(domain ? { domain } : {}),
+      ...(organizationId ? { organization_id: organizationId } : {}),
+    },
   });
   return res.data;
 };
