@@ -1,294 +1,808 @@
-# CivicOne — Unified Digital Identity & Secure Citizen Services Platform
+# CivicOne – Unified Digital Identity & Secure Citizen Services Platform
 
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%200.115+-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/Frontend-React%2018%20(JavaScript%20only)-61DAFB.svg?logo=react)](https://react.dev)
-[![Tailwind CSS](https://img.shields.io/badge/Styling-Tailwind%20CSS%203.4-38B2AC.svg?logo=tailwind-css)](https://tailwindcss.com)
-[![SQLAlchemy](https://img.shields.io/badge/ORM-SQLAlchemy%202.x-D71F00.svg)](https://www.sqlalchemy.org)
-[![Alembic](https://img.shields.io/badge/Migrations-Alembic-blue.svg)](https://alembic.sqlalchemy.org)
-[![Docker](https://img.shields.io/badge/Deployment-Docker%20Compose-2496ED.svg?logo=docker)](https://www.docker.com)
+**AI-Powered | Multi-Organization | Full-Stack Civic Services Platform**
 
-**CivicOne** is a secure, responsive, full-stack civic services platform designed to consolidate citizen interactions with essential public departments—**Transport Services**, **Municipal Infrastructure**, and **Public Healthcare**—under a unified digital identity.
+CivicOne is a secure, responsive, full-stack civic services platform designed to consolidate citizen interactions with essential public-service departments under a unified digital identity.
 
-The platform provides two dedicated, role-isolated portals:
-1. **Citizen Portal**: Public-facing civic services, manual address-based complaint submission (strictly no GPS or live location tracking), live complaint tracking timelines, public circulars, healthcare clinic directories, appointment booking, and cross-service consent management.
-2. **Government Portal**: Department-scoped operations for complaint assignment and resolution, SLA deadlines and overdue escalation, private notes and protected evidence, role-managed staff, scheduled and targeted public announcements, audit history, and database-backed workload and resolution analytics.
+The platform integrates three major service domains:
 
----
+- **Transport Services** – Bus operations, transport safety and infrastructure.
+- **Municipal Services** – Roads, drainage, sanitation, streetlights and water supply.
+- **Healthcare Services** – Hospitals, clinics and healthcare facility management.
 
-## 🎨 Service Domains & Visual Identity
-
-CivicOne implements tailored visual identities and color palettes for each civic service domain:
-
-| Domain | Accent & Palette | Department Focus | Portal Identity |
-| :--- | :--- | :--- | :--- |
-| **Transport Services** | Blue & Cyan (`#2563EB`) | Transit bus operations, shelters, bus stops, urban commuter corridors. | Dark Navy sidebar (`#0B192C`) |
-| **Municipal Services** | Green & Teal (`#10B981`) | Solid waste collection, roads, potholes, streetlights, drainage. | Forest Green sidebar (`#064e3b`) |
-| **Healthcare Services** | Coral & Soft Red (`#F43F5E`) | Public health clinics, medical equipment, appointments, public health camps. | Burgundy sidebar (`#450a0a`) |
+CivicOne provides dedicated, role-isolated portals for citizens and government personnel, enabling transparent complaint management, AI-assisted classification, departmental coordination, healthcare service access and secure public-service delivery.
 
 ---
 
-## 🏛️ System Architecture & Technology Stack
+## Table of Contents
 
-### Frontend
-- **Framework**: React 18 with Vite 5.
-- **Language**: JavaScript (ES6+) and JSX only (`.js`, `.jsx`).
-- **Styling**: Tailwind CSS 3.4 with custom domain design tokens, responsive cards, and accessible typography.
-- **Routing**: React Router DOM 6 with authentication and portal guards.
-- **State & Authentication**: React Context API (`AuthContext`) with persistent JWT storage and automatic token refresh handling.
-- **Data Visualization**: Recharts (Line charts, Bar charts, Donut charts).
-- **Icons**: Lucide React.
-- **Testing**: Vitest & React Testing Library with jsdom.
-
-### Backend
-- **Framework**: FastAPI (Python 3.11).
-- **Server**: Uvicorn.
-- **ORM & Database**: SQLAlchemy 2.x supporting PostgreSQL (Production / Docker) and SQLite (Local development).
-- **Database Migrations**: Alembic version-controlled schema migrations.
-- **Validation**: Pydantic v2 schemas for request and response payloads.
-- **Authentication & Security**: Argon2id password hashing, JWT access tokens, refresh session rotation, RBAC, and immutable audit logging.
-- **AI Classification**: OpenAI API integration with structured Pydantic schema validation and deterministic keyword/priority fallbacks.
-- **Testing**: Pytest with HTTPX test client.
+- [Key Features](#-key-features)
+- [Service Domains](#-service-domains)
+- [System Architecture](#-system-architecture)
+- [Technology Stack](#-technology-stack)
+- [User Roles and Access Control](#-user-roles-and-access-control)
+- [Core Workflows](#-core-workflows)
+- [Database Architecture](#-database-architecture)
+- [Security and Privacy](#-security-and-privacy)
+- [Project Structure](#-project-structure)
+- [Installation and Setup](#-installation-and-setup)
+- [Docker Deployment](#-docker-deployment)
+- [Testing](#-testing)
+- [Future Enhancements](#-future-enhancements)
 
 ---
 
-## 📂 Project Directory Structure
+## 🚀 Key Features
+
+### 1. Citizen Portal
+
+A dedicated public-facing portal that enables citizens to access civic services through a unified interface.
+
+- Citizen registration and authentication.
+- Submit complaints across multiple service domains.
+- Manual address-based complaint submission.
+- Upload photographic evidence.
+- Track complaint progress through activity timelines.
+- Access public circulars and announcements.
+- Explore healthcare facilities and clinic directories.
+- Submit healthcare appointment requests.
+- Manage cross-service consent.
+- Receive in-app notifications.
+- Manage profile information and account settings.
+
+### 2. Government Portal
+
+A separate portal for authorized government personnel to manage departmental operations.
+
+- Department-scoped complaint management.
+- Complaint assignment and resolution.
+- Staff workload monitoring.
+- SLA deadline tracking and overdue identification.
+- Protected evidence and internal notes.
+- Department and staff administration.
+- Organization-level analytics.
+- Document review and publishing.
+- Audit history and operational activity tracking.
+- Notification management.
+
+### 3. AI-Assisted Complaint Classification
+
+CivicOne integrates AI-assisted complaint classification to reduce manual categorization and support efficient departmental routing.
+
+Key capabilities:
+
+- Analyses citizen-submitted complaint descriptions.
+- Identifies relevant complaint categories.
+- Supports departmental routing.
+- Uses structured response validation through Pydantic.
+- Provides deterministic keyword-based fallback rules when the external AI provider is unavailable.
+- Supports manual review when classification requires further verification.
+
+### 4. Complaint Lifecycle Management
+
+A centralized complaint management system maintains the current status, assignment details and historical activity of every complaint.
+
+The platform uses four canonical complaint statuses:
+
+| Status | Description |
+|---|---|
+| `submitted` | Complaint has been submitted by a citizen. |
+| `assigned` | Complaint has been assigned for handling. |
+| `in_progress` | Department staff are working on the complaint. |
+| `resolved` | Complaint resolution has been recorded. |
+
+Supported transitions:
+
+```text
+submitted
+    |
+    v
+assigned
+    |
+    v
+in_progress
+    |
+    v
+resolved
+```
+
+An assigned complaint may also transition directly to resolved when appropriate.
+
+Additional capabilities:
+
+- Automatic complaint reference generation.
+- Staff assignment notifications.
+- Complaint activity and status history.
+- Duplicate-submission protection.
+- Transactional status updates.
+- Row-level locking for concurrent assignment and status operations.
+- SLA deadline monitoring.
+- Overdue complaint identification.
+
+**Note:** Overdue is a calculated condition based on the resolution deadline and current complaint status. It is not a separate complaint status.
+
+### 5. Document and Public Announcement Management
+
+CivicOne provides a structured document publishing and approval workflow.
+
+The four publishing stages are:
+
+1. **Draft** – Document or announcement is created.
+2. **Review** – Submitted for authorized verification.
+3. **Approved** – Formally approved by an authorized reviewer.
+4. **Published** – Made available to the intended audience according to its publication schedule.
+
+Additional functionality:
+
+- Department-specific documents.
+- Public circulars and announcements.
+- Scheduled publication and expiry.
+- Targeted announcements.
+- Review feedback and resubmission.
+- Protected document attachments.
+- Access-controlled document downloads.
+
+### 6. Analytics and SLA Monitoring
+
+Database-backed analytics provide operational insights to authorized government personnel.
+
+Features include:
+
+- Pending complaint statistics.
+- Assigned complaint counts.
+- In-progress complaint counts.
+- Resolved complaint statistics.
+- Overdue complaint identification.
+- Department workload monitoring.
+- Complaint resolution metrics.
+- Organization-level performance insights.
+
+The dashboard uses the canonical four-status complaint model to maintain consistency between database records and displayed statistics.
+
+### 7. Notification Management
+
+The notification system supports communication between citizens and government personnel.
+
+- Complaint assignment notifications.
+- Citizen-facing complaint updates.
+- Staff assignment alerts.
+- Document review notifications.
+- Announcement-related notifications.
+- Unread notification tracking.
+
+### 8. Healthcare Services
+
+The Healthcare domain provides dedicated public healthcare functionality.
+
+- Healthcare facility directory.
+- Hospital and clinic information.
+- Facility management.
+- Appointment request submission.
+- Healthcare service access through the Citizen Portal.
+
+### 9. Cross-Service Consent Management
+
+CivicOne includes a consent management module that enables citizens to manage consent across supported service domains.
+
+- Grant consent.
+- Revoke consent.
+- Maintain consent records.
+- Record consent-related activities.
+- Support controlled cross-domain data access.
+
+---
+
+## 🏛️ Service Domains
+
+CivicOne integrates three public-service domains with dedicated visual identities and department structures.
+
+| Service Domain | Departments | Visual Identity |
+|---|---|---|
+| Transport Services | Bus Operations, Transport Safety, Bus Stops and Infrastructure | Blue and Cyan |
+| Municipal Services | Roads, Drainage, Sanitation, Streetlights, Water Supply | Green and Teal |
+| Healthcare Services | Hospitals and Clinics, Facility Management | Coral and Soft Red |
+
+Each domain operates within the centralized platform while maintaining appropriate organizational and departmental access boundaries.
+
+---
+
+## 🏗️ System Architecture
+
+CivicOne follows a modular full-stack architecture consisting of a React frontend, FastAPI backend and relational PostgreSQL database.
+
+```text
+                 CIVICONE PLATFORM
+                         |
+             +-----------+-----------+
+             |                       |
+        CITIZEN PORTAL          GOVERNMENT PORTAL
+             |                       |
+             +-----------+-----------+
+                         |
+                   React Frontend
+                         |
+                  RESTful API Layer
+                         |
+                   FastAPI Backend
+                         |
+        +----------------+----------------+
+        |                |                |
+   Authentication   Business Logic    AI Services
+        |                |                |
+        +----------------+----------------+
+                         |
+                 SQLAlchemy ORM
+                         |
+                  PostgreSQL
+                         |
+              Relational Data Storage
+```
+
+### Architectural Components
+
+**Frontend Layer**
+- Citizen and government interfaces.
+- Protected routes and portal separation.
+- Authentication context.
+- Modular API integration.
+- Responsive UI components.
+- Analytics visualizations.
+
+**Backend Layer**
+- RESTful API endpoints.
+- Authentication and authorization.
+- Complaint lifecycle management.
+- Department routing and permissions.
+- AI classification services.
+- Notification and document workflows.
+
+**Database Layer**
+- Relational data modelling.
+- Foreign-key relationships.
+- Database constraints.
+- Transaction management.
+- Version-controlled migrations.
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend Framework | React 18 |
+| Build Tool | Vite 5 |
+| Language | JavaScript ES6+, JSX |
+| Styling | Tailwind CSS 3.4 |
+| Routing | React Router DOM 6 |
+| State Management | React Context API |
+| Data Visualization | Recharts |
+| Icons | Lucide React |
+| Backend Framework | Python FastAPI |
+| Backend Server | Uvicorn |
+| ORM | SQLAlchemy 2.x |
+| Database | PostgreSQL / SQLite |
+| Database Migrations | Alembic |
+| Validation | Pydantic v2 |
+| Authentication | JWT |
+| Password Security | Argon2id |
+| AI Integration | OpenAI API |
+| Backend Testing | Pytest, HTTPX |
+| Frontend Testing | Vitest, React Testing Library |
+| Containerization | Docker, Docker Compose |
+| Web Server | Nginx |
+
+---
+
+## 🔐 User Roles and Access Control
+
+CivicOne implements backend-enforced Role-Based Access Control (RBAC).
+
+### Platform Roles
+
+| Role | Responsibilities |
+|---|---|
+| Citizen | Submit complaints, track progress and access public services. |
+| Staff | Handle complaints according to active department memberships. |
+| Organization Admin | Manage operations within the assigned organization. |
+| Platform Admin | Perform authorized platform-level administrative operations. |
+
+### Department-Level Roles
+
+Department memberships determine the permissions and responsibilities of staff within their respective departments.
+
+The system supports department-specific responsibilities such as staff members, leads, supervisors and authorized administrative personnel.
+
+### Access Isolation
+
+- Citizens can access only their own complaints and notifications.
+- Staff access is restricted to their authorized department memberships.
+- Organization administrators are scoped to their respective organizations.
+- Cross-organization access is restricted.
+- Platform administrators follow a separate administrative access policy.
+
+All important permissions are enforced by the backend rather than relying only on frontend route restrictions.
+
+---
+
+## 🔄 Core Workflows
+
+### 1. Manual Address-Based Complaint Submission
+
+1. Citizen selects a service domain.
+2. Selects the relevant complaint category.
+3. Enters a title and detailed description.
+4. Provides the street address, landmark and locality manually.
+5. Optionally uploads photographic evidence.
+6. AI-assisted classification supports category identification and departmental routing.
+7. A complaint reference is generated.
+8. The complaint is stored and made available to authorized personnel.
+
+**Privacy principle:** CivicOne uses manual address entry. It does not utilize GPS, device geolocation APIs or live location tracking.
+
+### 2. Complaint Assignment and Resolution
+
+```text
+Citizen Submission
+        |
+        v
+AI-Assisted Classification
+        |
+        v
+Department Routing
+        |
+        v
+Staff Assignment
+        |
+        v
+Complaint Processing
+        |
+        v
+Resolution
+        |
+        v
+Citizen Notification
+```
+
+Complaint status changes and important actions are recorded for traceability.
+
+### 3. Document Publishing Workflow
+
+```text
+Draft
+  |
+  v
+Review
+  |
+  v
+Approved
+  |
+  v
+Published
+```
+
+Authorized reviewers can provide feedback, request revisions or reject documents according to the publishing workflow.
+
+### 4. Healthcare Appointment Workflow
+
+Citizens can browse healthcare facilities and submit appointment requests through the Healthcare Services module.
+
+### 5. Consent Management Workflow
+
+Citizens can grant or revoke consent for supported cross-service interactions, with consent activities recorded in the database.
+
+---
+
+## 🗄️ Database Architecture
+
+CivicOne uses PostgreSQL as its primary relational database and SQLAlchemy for object-relational mapping.
+
+Important database entities include:
+
+| Table | Purpose |
+|---|---|
+| `users` | Stores citizen, staff and administrator accounts. |
+| `organizations` | Stores service organizations. |
+| `departments` | Stores departments within organizations. |
+| `department_memberships` | Maps staff to departments and departmental roles. |
+| `complaints` | Stores complaint details and current status. |
+| `complaint_activities` | Records complaint-related activities. |
+| `complaint_status_history` | Maintains status-change history. |
+| `complaint_evidence` | Stores complaint evidence metadata. |
+| `complaint_internal_notes` | Stores internal departmental notes. |
+| `department_slas` | Defines departmental service-level targets. |
+| `documents` | Stores documents and public announcements. |
+| `notifications` | Stores user notifications. |
+| `audit_events` | Records important administrative and security events. |
+| `consent_grants` | Stores consent records. |
+| `healthcare_facilities` | Stores healthcare facility information. |
+| `appointment_requests` | Stores healthcare appointment requests. |
+| `refresh_sessions` | Manages refresh-token sessions. |
+| `password_reset_tokens` | Manages password-reset tokens. |
+
+Database integrity is maintained through primary keys, foreign keys, unique constraints, check constraints and transactional operations.
+
+Alembic provides version-controlled database schema migrations.
+
+---
+
+## 🛡️ Security and Privacy
+
+CivicOne incorporates several security mechanisms:
+
+- JWT-based authentication.
+- Argon2id password hashing.
+- Refresh-session rotation.
+- Role-Based Access Control.
+- Organization-level data isolation.
+- Department-level authorization.
+- Secure document access.
+- Protected complaint evidence.
+- Password-reset token hashing and revocation.
+- Audit logging for security-sensitive actions.
+- Backend validation using Pydantic.
+- Database constraints for data integrity.
+- Manual address-based complaint submission without GPS tracking.
+
+---
+
+## 📂 Project Structure
 
 ```text
 civicone/
-├── docker-compose.yml              # Multi-container orchestration (PostgreSQL, Backend, Frontend)
-├── .gitignore
+│
+├── docker-compose.yml
 ├── README.md
+├── .gitignore
+│
 ├── backend/
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   ├── alembic.ini
-│   ├── .env.example
-│   ├── migrations/                 # Alembic database migrations
-│   │   ├── env.py
+│   │
+│   ├── migrations/
 │   │   └── versions/
-│   ├── tests/                      # Pytest unit and integration test suite
-│   │   └── test_civicone.py
+│   │
+│   ├── tests/
+│   │
 │   └── app/
-│       ├── main.py                 # FastAPI application & router mounting
+│       ├── main.py
+│       ├── models.py
+│       │
 │       ├── core/
-│       │   ├── config.py           # Environment settings via Pydantic
-│       │   ├── database.py         # SQLAlchemy engine & session factory
-│       │   ├── security.py         # Argon2id hashing & JWT token management
-│       │   ├── dependencies.py     # RBAC & department authorization guards
-│       │   └── logging.py          # Security audit event logger
-│       ├── models.py               # Normalized SQLAlchemy database models
+│       │   ├── config.py
+│       │   ├── database.py
+│       │   ├── security.py
+│       │   ├── dependencies.py
+│       │   └── logging.py
+│       │
 │       ├── ai/
-│       │   ├── service.py          # OpenAI classification service
-│       │   └── fallback.py         # Deterministic keyword routing rules
+│       │   ├── service.py
+│       │   └── fallback.py
+│       │
 │       ├── policies/
-│       │   ├── permissions.py      # Complaint state-machine transition validator
-│       │   └── routing.py          # Department routing logic
+│       │   ├── permissions.py
+│       │   └── routing.py
+│       │
 │       └── routers/
-│           ├── auth.py             # Citizen/Gov login, registration, refresh, reset
-│           ├── complaints.py       # Address complaint submission & status history
-│           ├── documents.py        # 4-stage document review and publishing
-│           ├── consent.py          # Cross-domain citizen consent management
-│           ├── notifications.py    # In-app notifications with unread tracking
-│           ├── services.py         # Healthcare facilities & appointment booking
-│           ├── analytics.py        # Database-backed dashboard metrics
-│           └── admin.py            # Organization, department, and staff provisioning
+│           ├── auth.py
+│           ├── complaints.py
+│           ├── documents.py
+│           ├── consent.py
+│           ├── notifications.py
+│           ├── services.py
+│           ├── analytics.py
+│           └── admin.py
+│
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf
     ├── package.json
     ├── vite.config.js
     ├── tailwind.config.js
-    ├── index.html
-    ├── .env.example
+    │
     └── src/
         ├── App.jsx
         ├── main.jsx
-        ├── index.css               # Design system tokens and styles
-        ├── api/                    # Modular Axios client & API endpoints
-        │   ├── axios.js
-        │   ├── auth.js
-        │   ├── complaints.js
-        │   ├── documents.js
-        │   ├── services.js
-        │   └── index.js
+        ├── api/
         ├── context/
-        │   └── AuthContext.jsx     # Session, staff profiling, and notifications
         ├── components/
-        │   ├── common/             # Logo, StatusBadge, PriorityBadge, HeroIllustrations
-        │   ├── navigation/         # CitizenNavbar, PublicNavbar, GovSidebar, GovTopBar
-        │   └── dashboard/          # StatCard, NoticeCard, ComplaintTable
         ├── layouts/
-        │   ├── PublicLayout.jsx
-        │   ├── CitizenLayout.jsx
-        │   └── GovernmentLayout.jsx
         ├── routes/
-        │   └── AppRoutes.jsx       # Route guards and URL mappings
         ├── tests/
-        │   └── civicone.test.jsx   # Vitest frontend component tests
         └── pages/
-            ├── Landing.jsx
-            ├── Login.jsx           # Clean, unified login portal
-            ├── Register.jsx        # Citizen account registration
-            ├── PasswordReset.jsx
-            ├── TransportCitizenPortal.jsx   # Dedicated Transport service page
-            ├── MunicipalCitizenPortal.jsx   # Dedicated Municipal service page
-            ├── HealthcareCitizenPortal.jsx  # Dedicated Healthcare service page
-            ├── CitizenDashboard.jsx
-            ├── MyComplaints.jsx
-            ├── NewComplaint.jsx    # 3-step wizard with strict manual address entry
-            ├── ComplaintDetail.jsx # Live timeline, internal notes, and reopen controls
-            ├── PublishedNotices.jsx
-            ├── ConsentManagement.jsx
-            ├── HealthcareServices.jsx
-            ├── NotificationsPage.jsx
-            ├── ProfileSettings.jsx
-            ├── HelpSupport.jsx
-            ├── GovDashboard.jsx    # Staff dashboard with domain themes & metrics
-            ├── GovComplaints.jsx
-            ├── GovDocuments.jsx
-            ├── GovAnalytics.jsx
-            ├── GovStaffManagement.jsx
-            ├── GovOrganizations.jsx
-            ├── GovAuditLogs.jsx
-            └── Misc.jsx            # Unauthorized and NotFound views
 ```
 
 ---
 
-## 🚀 Setup & Execution Instructions
+## ⚙️ Installation and Setup
 
-### Local Development
+### Prerequisites
 
-#### 1. Backend Setup
+Install the following:
+
+- Python 3.11 or later.
+- Node.js and npm.
+- PostgreSQL, if using PostgreSQL locally.
+- Git.
+- Docker and Docker Compose (optional).
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/kishanbm19/CivicOne.git
+
+cd CivicOne
+```
+
+### 2. Backend Setup
+
+Navigate to the backend directory:
+
 ```bash
 cd backend
+```
 
-# Create and activate Python virtual environment
+Create a virtual environment:
+
+```bash
 python -m venv venv
-# On Windows:
+```
+
+Activate it.
+
+**Windows:**
+
+```powershell
 .\venv\Scripts\activate
-# On Linux/macOS:
+```
+
+**Linux/macOS:**
+
+```bash
 source venv/bin/activate
+```
 
-# Install dependencies
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
+```
 
-# Run database migrations to initialize schema
+Configure environment variables using the supplied `.env.example` file.
+
+Ensure that the database URL and required authentication and AI configuration values are correctly configured.
+
+Run database migrations:
+
+```bash
 alembic upgrade head
+```
 
-# Start FastAPI development server
+Start the backend:
+
+```bash
 uvicorn app.main:app --reload --port 8000
 ```
-- API Base URL: `http://localhost:8000`
-- Interactive Swagger Documentation: `http://localhost:8000/docs`
-- ReDoc Documentation: `http://localhost:8000/redoc`
 
-#### 2. Frontend Setup
-In a new terminal window:
+Backend API:
+
+```text
+http://localhost:8000
+```
+
+Interactive API documentation:
+
+```text
+http://localhost:8000/docs
+```
+
+ReDoc:
+
+```text
+http://localhost:8000/redoc
+```
+
+### 3. Frontend Setup
+
+Open another terminal:
+
 ```bash
 cd frontend
+```
 
-# Install Node dependencies
+Install dependencies:
+
+```bash
 npm install
+```
 
-# Start Vite development server
+Configure frontend environment variables using `.env.example`.
+
+Start the development server:
+
+```bash
 npm run dev
 ```
-- Frontend Application URL: `http://localhost:5173`
+
+Frontend application:
+
+```text
+http://localhost:5173
+```
 
 ---
 
-### Docker Deployment
+## 🐳 Docker Deployment
 
-To launch the entire platform with PostgreSQL, FastAPI, and React/Nginx in isolated containers:
+CivicOne supports containerized deployment using Docker Compose.
+
+From the project root:
 
 ```bash
 docker-compose up --build
 ```
 
-Services exposed:
-- React Frontend: `http://localhost:5173`
-- FastAPI Backend: `http://localhost:8000`
-- PostgreSQL Database: `localhost:5432`
+The application services include:
+
+- PostgreSQL database.
+- FastAPI backend.
+- React frontend served through Nginx.
+
+Configure the required environment variables before deployment.
+
+Default local service addresses:
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| Backend | http://localhost:8000 |
+| API Documentation | http://localhost:8000/docs |
+| PostgreSQL | localhost:5432 |
 
 ---
 
-## 👥 Authentication & Portal Access
+## 🧪 Testing
 
-The application cleanly separates public citizens from authorized government personnel:
+CivicOne includes automated backend and frontend test suites.
 
-### 1. Citizen Portal (`/login`, `/register`)
-- **Self-Registration**: Anyone can register a new Citizen account via `/register` by providing their full name, email address, password, and phone number.
-- **Access**: Access the Citizen Dashboard, file issues across Transport, Municipal, and Healthcare departments, track status timelines, and manage consent.
+### Backend Testing
 
-### 2. Government Staff Portal (`/government/login`)
-- **Staff Access**: Authorized personnel log in using their assigned administrative or staff email address.
-- **Department Roles**:
-  - **Staff Member**: Handle assigned complaints, provide progress updates, add private notes, and upload resolution evidence.
-  - **Manager / Supervisor**: Monitor department queues, assign complaints, review notices, and receive overdue escalations.
-  - **Department Admin**: Manage department memberships, SLAs, assignments, and reports.
-  - **Public Information Officer**: Draft and publish approved public information for authorized departments.
-  - **Platform Admin**: Configure organizations and departments, manage system-wide access, and inspect platform audit logs.
+Navigate to the backend directory:
 
----
-
-## 📋 Core Workflows
-
-### Manual Address Complaint Submission
-1. Select the relevant service domain (Transport, Municipal, or Healthcare) and category.
-2. Provide a descriptive title and detailed summary of the civic issue.
-3. **Manual Location Entry**: Enter the street address, landmark, and locality manually. In accordance with platform privacy guidelines, no GPS or device geolocation APIs are utilized.
-4. Optional: Attach photographic evidence.
-5. Upon submission, an automated reference code (e.g., `#T-2024-0001`) is generated and the complaint is routed to the corresponding department.
-
-### Complaint Life-Cycle & State Machine
-Complaint status changes are recorded with actor and time in the activity history. The workflow supports `submitted`, `classified`, `assigned`, `acknowledged`, `in_progress`, `on_hold`, `resolved`, `closed`, `reopened`, and `rejected`. Staff can record private internal notes; citizens receive notifications for visible assignment, status, and information-request updates. Department category SLAs set resolution deadlines, and high-priority complaints require evidence and resolution remarks before resolution.
-
-### 4-Stage Document Publishing
-Government circulars and citizen notices advance through an audit-backed approval workflow:
-1. **Draft**: Authored by department staff.
-2. **Review**: Submitted to departmental leadership for verification.
-3. **Approved**: Formally authorized by a department or platform administrator.
-4. **Published**: Rendered on the Citizen Portal at the scheduled publication time and removed after expiry.
-
-Reviewers can request changes (returning a notice to its author) or reject it; authors receive in-app notifications and can revise and resubmit drafts. Announcements can target a service domain, a department, or all citizens, and may include protected attachments. Department dashboards report actual complaint totals, overdue cases, staff workload, resolution times, activity, and announcement states.
-
----
-
-## 🧪 Automated Testing
-
-### Backend Test Suite (Pytest)
 ```bash
 cd backend
+```
+
+Run:
+
+```bash
 python -m pytest -v
 ```
-Validates:
-- Citizen registration and dual-portal isolation.
-- Complaint creation, reference generation, and automated routing.
-- Cross-user ownership isolation (HTTP 404 response preventing record enumeration).
-- State-machine status transitions and internal notes isolation.
-- 4-stage document review and publication workflow.
-- Cross-domain consent granting and revocation.
 
-### Frontend Test Suite (Vitest)
+The test suite covers areas including:
+
+- Citizen registration and portal isolation.
+- Authentication and authorization.
+- Complaint creation and reference generation.
+- Complaint routing and lifecycle transitions.
+- Cross-user complaint ownership restrictions.
+- Internal note access restrictions.
+- Document review and publishing workflows.
+- Consent granting and revocation.
+- Document security.
+- Password-reset security.
+- Complaint analytics and consistency.
+
+### Frontend Testing
+
+Navigate to the frontend directory:
+
 ```bash
 cd frontend
+```
+
+Run:
+
+```bash
 npm run test
 ```
-Validates core component rendering, design tokens, badges, stat cards, notices, and route access restriction views.
 
-### Frontend Production Build
+Frontend tests validate component rendering, dashboards, status indicators and route access restrictions.
+
+### Production Build
+
 ```bash
-cd frontend
 npm run build
 ```
-Validates complete JSX/ES6 module syntax correctness, asset optimization, and stylesheet bundling.
+
+This validates frontend compilation, JSX syntax, asset bundling and production build generation.
+
+### Latest Reported Test Results
+
+According to the latest consistency audit:
+
+| Test Suite | Result |
+|---|---:|
+| Backend tests | 68 passed |
+| Frontend tests | 32 passed |
+| Frontend production build | 0 errors |
+
+These results correspond to the tested project version documented in the consistency audit.
 
 ---
 
-## 🛡️ Security & Privacy Architecture
+## 🔮 Future Enhancements
 
-- **Address-Based Privacy**: No live coordinates, device tracking, or geolocation APIs.
-- **Role-Based Access Control (RBAC)**: All permissions are enforced at the backend database query layer.
-- **Audit Logging**: Security-critical events (logins, status changes, staff provisioning, consent changes) are immutably logged with actor IDs and timestamps.
-- **Resilient AI Classification**: Incorporates automatic fallback to deterministic routing rules when external AI services are unavailable.
+CivicOne is designed with an extensible architecture. The following enhancements can further improve its intelligence, scalability and accessibility.
+
+### 1. Advanced AI and NLP
+
+- Improve complaint classification using advanced NLP models.
+- Introduce multilingual complaint understanding.
+- Detect duplicate and related complaints.
+- Generate AI-assisted complaint summaries.
+- Recommend departments based on complaint context.
+
+### 2. Asynchronous Background Processing
+
+Integrate Celery and Redis to process time-consuming tasks independently of API requests.
+
+Potential applications include:
+
+- AI complaint classification.
+- Automated departmental routing.
+- Notification delivery.
+- Scheduled SLA reminders.
+- Complaint escalation workflows.
+
+### 3. Real-Time Communication
+
+Introduce WebSocket-based communication for real-time complaint updates, staff notifications and operational alerts.
+
+### 4. Predictive Analytics
+
+Develop predictive models to:
+
+- Forecast complaint volumes.
+- Identify recurring civic problems.
+- Estimate resolution delays.
+- Analyse departmental workloads.
+- Identify service-delivery trends.
+
+### 5. Mobile Application
+
+Develop dedicated Android and iOS applications to improve access to civic services.
+
+### 6. Advanced Performance and Scalability
+
+- Implement Redis caching.
+- Optimize database queries and indexing.
+- Conduct load and stress testing.
+- Introduce horizontal application scaling.
+- Improve database connection management.
+
+### 7. Monitoring and Observability
+
+Integrate tools such as Prometheus and Grafana for application monitoring, infrastructure metrics, API latency and database performance.
+
+### 8. Multilingual Citizen Services
+
+Introduce support for Kannada and other regional languages to make civic services accessible to a wider population.
+
+### 9. Government Service Integration
+
+Explore secure integrations with existing government portals and public-service systems to enable improved data exchange.
+
+### 10. Privacy-Conscious Geographic Analytics
+
+Explore complaint hotspot analysis using manually supplied addresses and locality information without introducing live device location tracking.
+
+---
+
+## 🎯 Project Vision
+
+CivicOne aims to establish a unified digital ecosystem that connects citizens with public-service organizations through secure identity management, intelligent complaint processing and transparent administrative workflows.
+
+By combining modern full-stack technologies, AI-assisted classification, relational database management and secure access control, the platform provides a foundation for more accessible, accountable and efficient digital civic services.
+
+**CivicOne – One Platform. Multiple Services. Better Civic Experiences.**
