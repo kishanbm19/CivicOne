@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 COPY docker-entrypoint.sh /usr/local/bin/civicone-entrypoint
-RUN chmod +x /usr/local/bin/civicone-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/civicone-entrypoint \
+    && chmod +x /usr/local/bin/civicone-entrypoint
 
 EXPOSE 8000
 

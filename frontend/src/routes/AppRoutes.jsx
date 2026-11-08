@@ -34,6 +34,7 @@ import GovAnalytics from "../pages/GovAnalytics";
 import GovStaffManagement from "../pages/GovStaffManagement";
 import GovOrganizations from "../pages/GovOrganizations";
 import GovAuditLogs from "../pages/GovAuditLogs";
+import GovConsentGrants from "../pages/GovConsentGrants";
 import { NotFound } from "../pages/Misc";
 
 const CITIZEN_ROLES = ["citizen"];
@@ -148,6 +149,7 @@ export default function AppRoutes() {
         <Route path="analytics" element={<Guard roles={["org_admin", "platform_admin"]} departmentRoles={DEPARTMENT_ROLES}><GovAnalytics /></Guard>} />
         <Route path="staff" element={<Guard roles={["org_admin", "platform_admin"]}><GovStaffManagement /></Guard>} />
         <Route path="admin/organizations" element={<Guard roles={["platform_admin"]}><GovOrganizations /></Guard>} />
+        <Route path="consents" element={<Guard roles={["org_admin"]}><GovConsentGrants /></Guard>} />
         <Route path="audit-logs" element={<Guard roles={["org_admin", "platform_admin"]}><GovAuditLogs /></Guard>} />
         <Route path="settings" element={<ProfileSettings />} />
       </Route>

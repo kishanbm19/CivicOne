@@ -45,17 +45,18 @@ export default function GovTopBar({
 
   return (
     <header className="h-16 bg-white border-b border-slate-200/80 px-6 flex items-center justify-between shadow-subtle sticky top-0 z-20">
-      {/* Search Input */}
-      <div className="relative w-72 sm:w-96">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-        <input
-          type="text"
-          value={searchValue}
-          onChange={handleSearchChange}
-          placeholder="Search Services..."
-          className="w-full pl-9 pr-4 py-2 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400"
-        />
-      </div>
+      {!isSystemOverview && (
+        <div className="relative w-72 sm:w-96">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchValue}
+            onChange={handleSearchChange}
+            placeholder="Search Services..."
+            className="w-full pl-9 pr-4 py-2 rounded-xl text-xs sm:text-sm bg-slate-50 border border-slate-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400"
+          />
+        </div>
+      )}
 
       {/* Right Controls */}
       <div className="flex items-center gap-4">

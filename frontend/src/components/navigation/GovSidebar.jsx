@@ -7,6 +7,7 @@ import {
   Users,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   LogOut,
   Layers
 } from "lucide-react";
@@ -25,6 +26,7 @@ export default function GovSidebar({
   const isSystemOverview = isPlatformAdmin && location.pathname === "/government/analytics";
   const isAdministrationPage = [
     "/government/staff",
+    "/government/consents",
     "/government/audit-logs",
     "/government/settings",
   ].includes(location.pathname) || location.pathname.startsWith("/government/admin/organizations");
@@ -161,6 +163,19 @@ export default function GovSidebar({
                   <Users size={16} />
                   <span>Staff Management</span>
                 </Link>
+                {user?.role === "org_admin" && (
+                  <Link
+                    to="/government/consents"
+                    className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors text-xs ${
+                      location.pathname === "/government/consents"
+                        ? currentTheme.activeBg
+                        : `text-slate-300 ${currentTheme.hoverBg}`
+                    }`}
+                  >
+                    <ShieldCheck size={16} />
+                    <span>Consent Records</span>
+                  </Link>
+                )}
                 {user?.role === "platform_admin" && (
                   <Link
                     to="/government/admin/organizations"

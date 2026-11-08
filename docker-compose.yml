@@ -1,6 +1,8 @@
 services:
   db:
     image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"    
     environment:
       POSTGRES_DB: civicone_db
       POSTGRES_USER: civicone

@@ -720,6 +720,66 @@ def test_consent_grant_and_revocation():
     assert rev_res.status_code == 200
     assert rev_res.json()["status"] == "revoked"
 
+def test_organization_admin_can_only_view_consent_grants_for_own_organization():
+    with TestingSessionLocal() as db:
+        own_org = db.scalar(select(Organization))
+        other_org = Organization(name="Consent Scope Other Org", domain="municipal")
+        db.add(other_org)
+        db.flush()
+        org_admin = User(
+            id="consent-org-admin",
+            email="consent-org-admin@test.civicone.test",
+            full_name="Consent Organization Admin",
+            role="org_admin",
+            organization_id=own_org.id,
+            password_hash=hash_password("Pass#1234"),
+        )
+        db.add(org_admin)
+        own_org_id = own_org.id
+        other_org_id = other_org.id
+        db.commit()
+
+    citizen_headers = auth_headers("cit-001")
+    own_grant = client.post(
+        "/api/v1/consent",
+        headers=citizen_headers,
+        json={
+            "recipient_organization_id": own_org_id,
+            "data_scope": "profile",
+            "purpose": "Verify citizen service profile",
+            "validity_days": 180,
+        },
+    )
+    assert own_grant.status_code == 201
+    other_grant = client.post(
+        "/api/v1/consent",
+        headers=citizen_headers,
+        json={
+            "recipient_organization_id": other_org_id,
+            "data_scope": "profile",
+            "purpose": "Verify citizen service profile",
+            "validity_days": 180,
+        },
+    )
+    assert other_grant.status_code == 201
+
+    response = client.get(
+        "/api/v1/consent/organization",
+        headers=auth_headers("consent-org-admin"),
+    )
+    assert response.status_code == 200
+    assert [grant["id"] for grant in response.json()] == [own_grant.json()["id"]]
+    assert response.json()[0]["citizen_name"] == "Citizen Tester"
+    assert response.json()[0]["data_scope"] == "profile"
+    assert client.get(
+        "/api/v1/consent/organization",
+        headers=auth_headers("adm-001"),
+    ).status_code == 403
+    assert client.get(
+        "/api/v1/consent/organization",
+        headers=citizen_headers,
+    ).status_code == 403
+
 def _create_transport_complaint():
     response = client.post("/api/v1/complaints", headers=auth_headers("cit-001"), json={
         "domain": "transport",

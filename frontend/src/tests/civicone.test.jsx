@@ -14,9 +14,11 @@ import Logo from "../components/common/Logo";
 import GovComplaints from "../pages/GovComplaints";
 import GovDashboard from "../pages/GovDashboard";
 import GovDocuments from "../pages/GovDocuments";
+import GovConsentGrants from "../pages/GovConsentGrants";
 import GovSidebar from "../components/navigation/GovSidebar";
 import GovTopBar from "../components/navigation/GovTopBar";
 import PublishedNotices from "../pages/PublishedNotices";
+import ConsentManagement from "../pages/ConsentManagement";
 import Landing from "../pages/Landing";
 import CitizenDashboard from "../pages/CitizenDashboard";
 
@@ -34,6 +36,11 @@ const departmentServiceMocks = vi.hoisted(() => ({
   getDepartmentAnalytics: vi.fn(),
   listDepartments: vi.fn(),
   listOrganizations: vi.fn(),
+  listPublicOrganizations: vi.fn(),
+  listOrganizationConsentGrants: vi.fn(),
+  listConsentGrants: vi.fn(),
+  createConsentGrant: vi.fn(),
+  revokeConsentGrant: vi.fn(),
 }));
 
 const documentServiceMocks = vi.hoisted(() => ({
@@ -82,6 +89,11 @@ beforeEach(() => {
   });
   departmentServiceMocks.listDepartments.mockReset().mockResolvedValue([]);
   departmentServiceMocks.listOrganizations.mockReset().mockResolvedValue([]);
+  departmentServiceMocks.listPublicOrganizations.mockReset().mockResolvedValue([]);
+  departmentServiceMocks.listOrganizationConsentGrants.mockReset().mockResolvedValue([]);
+  departmentServiceMocks.listConsentGrants.mockReset().mockResolvedValue([]);
+  departmentServiceMocks.createConsentGrant.mockReset().mockResolvedValue({});
+  departmentServiceMocks.revokeConsentGrant.mockReset().mockResolvedValue({});
   documentServiceMocks.listPublicDocuments.mockReset().mockResolvedValue({ items: [] });
   documentServiceMocks.listStaffDocuments.mockReset().mockResolvedValue([]);
   authMocks.useAuth.mockReset().mockReturnValue({
@@ -280,6 +292,7 @@ describe("CivicOne Design System & Components", () => {
 
     expect(screen.getByText("Test Staff")).toBeDefined();
     expect(screen.getByText("Roads Department")).toBeDefined();
+    expect(screen.getByPlaceholderText("Search Services...")).toBeDefined();
   });
 
   it("shows the organization selector without an all-organizations option only on System Overview", () => {
@@ -304,6 +317,7 @@ describe("CivicOne Design System & Components", () => {
     );
 
     expect(screen.getByRole("button", { name: /Select Organization/ })).toBeDefined();
+    expect(screen.queryByPlaceholderText("Search Services...")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Select Organization/ }));
     expect(screen.getByRole("option", { name: /Transport Authority/ })).toBeDefined();
     expect(screen.getByRole("option", { name: /Health Authority/ })).toBeDefined();
@@ -447,6 +461,49 @@ describe("CivicOne Design System & Components", () => {
     fireEvent.focus(window);
     await waitFor(() => expect(screen.queryByText("Temporary Service Notice")).toBeNull());
     expect(documentServiceMocks.listPublicDocuments).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads recipient organizations from the public endpoint for consent grants", async () => {
+    departmentServiceMocks.listPublicOrganizations.mockResolvedValue([
+      { id: "org-1", name: "Transport Authority", domain: "transport" },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <ConsentManagement />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Grant New Consent/ }));
+
+    expect(await screen.findByRole("option", { name: /Transport Authority/ })).toBeDefined();
+    expect(departmentServiceMocks.listPublicOrganizations).toHaveBeenCalledOnce();
+    expect(departmentServiceMocks.listOrganizations).not.toHaveBeenCalled();
+  });
+
+  it("shows organization-scoped citizen consent records without granting data access", async () => {
+    departmentServiceMocks.listOrganizationConsentGrants.mockResolvedValue([
+      {
+        id: "consent-1",
+        citizen_name: "Citizen Tester",
+        data_scope: "profile",
+        purpose: "Verify citizen service profile",
+        status: "active",
+        granted_at: "2026-11-05T00:00:00Z",
+        expires_at: "2027-05-04T00:00:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <GovConsentGrants />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("Citizen Tester")).toBeDefined();
+    expect(screen.getByText("profile")).toBeDefined();
+    expect(screen.getByText(/do not grant access to citizen data/)).toBeDefined();
+    expect(departmentServiceMocks.listOrganizationConsentGrants).toHaveBeenCalledOnce();
   });
 
   it("offers only valid complaint statuses in the staff filter", async () => {

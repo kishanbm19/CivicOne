@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import { Shield, Plus, CheckCircle2, AlertCircle } from "lucide-react";
-import { listConsentGrants, createConsentGrant, revokeConsentGrant, listOrganizations } from "../services/services";
+import {
+  listConsentGrants,
+  createConsentGrant,
+  revokeConsentGrant,
+  listPublicOrganizations,
+} from "../services/services";
 import { errMsg } from "../services/axios";
 
 export default function ConsentManagement() {
@@ -18,13 +23,14 @@ export default function ConsentManagement() {
 
   const loadData = () => {
     setLoading(true);
-    Promise.all([listConsentGrants(), listOrganizations()])
+    setError(null);
+    Promise.all([listConsentGrants(), listPublicOrganizations()])
       .then(([gData, oData]) => {
         setGrants(gData || []);
         setOrgs(oData || []);
         if (oData?.length > 0) setSelectedOrgId(oData[0].id);
       })
-      .catch((err) => console.error("Consent load error:", err))
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
   };
 
@@ -240,7 +246,7 @@ export default function ConsentManagement() {
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || !selectedOrgId}
                   className="btn text-xs font-semibold"
                 >
                   {submitting ? "Granting..." : "Authorize Consent"}

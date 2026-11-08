@@ -17,8 +17,18 @@ export const createAppointment = async (data) => {
 };
 
 // Consent Management
+export const listPublicOrganizations = async () => {
+  const res = await api.get("/services/organizations");
+  return res.data;
+};
+
 export const listConsentGrants = async () => {
   const res = await api.get("/consent");
+  return res.data;
+};
+
+export const listOrganizationConsentGrants = async () => {
+  const res = await api.get("/consent/organization");
   return res.data;
 };
 
